@@ -1,0 +1,64 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+
+# Runtime state and authorized capture evidence are never source artifacts.
+.runtime/
+artifacts/
+reference-captures/
+screenshots/
+test-results/
+qa/auth-capture/
+qa/local-settings/
+qa/codex-cloud-mobile/
+qa/plus-conversation/
+qa/**/*.png
+qa/**/*.webp
+/qa/settings-network-sanitized.*
+/qa/settings-network-auth-analysis.md
+/qa/official-auth-probe-*.md
+
+# Root-level visual comparison output; production assets live under public/.
+/*.png
+/*.webp
+
+# Credential/key/capture formats must not enter the repository.
+*.har
+*.pcap
+*.pcapng
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+cookies.txt
+session.json
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

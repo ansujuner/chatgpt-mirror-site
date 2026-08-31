@@ -1,0 +1,23 @@
+# Replace the domain and the dist path before use. Caddy obtains and renews
+# the public TLS certificate automatically when DNS points at this host.
+chat.example.com {
+	encode zstd gzip
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8787 {
+			# Keep the browser-visible origin intact for origin checks and cookies.
+			header_up Host {host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			# Stream SSE chunks immediately instead of buffering a chat response.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv/chatgpt-replica/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,0 +1,1481 @@
+.ov-layer {
+  --ov-surface: var(--surface-raised, #fff);
+  --ov-surface-base: var(--surface, #fff);
+  --ov-surface-muted: var(--surface-muted, #f3f3f3);
+  --ov-surface-pressed: var(--surface-strong, #e8e8e8);
+  --ov-text: var(--text, #0d0d0d);
+  --ov-text-secondary: var(--text-secondary, #5d5d5d);
+  --ov-text-tertiary: var(--text-tertiary, #8f8f8f);
+  --ov-border: var(--border, rgba(0, 0, 0, 0.1));
+  --ov-border-strong: var(--border-strong, rgba(0, 0, 0, 0.15));
+  --ov-focus: var(--focus, #3a83f7);
+  --ov-primary: var(--accent, #0d0d0d);
+  --ov-primary-text: var(--accent-contrast, #fff);
+  color: var(--ov-text);
+  font-family: -apple-system-body, ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+.ov-modal-layer {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  padding: 24px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.ov-modal-layer[data-state='open'] {
+  opacity: 1;
+}
+
+.ov-modal-layer[data-state='closed'] {
+  pointer-events: none;
+}
+
+.ov-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ov-button,
+.ov-icon-button,
+.ov-settings-row,
+.ov-settings-select,
+.ov-auth-input {
+  font: inherit;
+}
+
+.ov-button,
+.ov-icon-button,
+.ov-settings-detail-trigger {
+  color: inherit;
+  cursor: pointer;
+}
+
+.ov-button {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 16px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 100ms ease;
+}
+
+.ov-button:active {
+  transform: scale(0.985);
+}
+
+.ov-primary-button {
+  border: 1px solid var(--ov-primary);
+  color: var(--ov-primary-text);
+  background: var(--ov-primary);
+}
+
+.ov-primary-button:hover {
+  filter: brightness(1.12);
+}
+
+.ov-secondary-button {
+  border: 1px solid var(--ov-border);
+  color: var(--ov-text);
+  background: var(--ov-surface-base);
+}
+
+.ov-secondary-button:hover {
+  background: var(--ov-surface-muted);
+}
+
+.ov-button:focus-visible,
+.ov-icon-button:focus-visible,
+.ov-settings-row:focus-visible,
+.ov-settings-select:focus-visible,
+.ov-auth-input:focus-visible,
+.ov-switch-row input:focus-visible {
+  outline: 2px solid var(--ov-focus);
+  outline-offset: 2px;
+}
+
+.ov-icon-button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 12px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 120ms ease, transform 100ms ease;
+}
+
+.ov-icon-button:hover {
+  background: var(--ov-surface-muted);
+}
+
+.ov-icon-button:active {
+  transform: scale(0.94);
+}
+
+.ov-icon-button svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+/* Authentication */
+
+.ov-auth-dialog {
+  position: relative;
+  width: min(448px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 34px 42px 28px;
+  overflow: auto;
+  border: 0;
+  border-radius: 20px;
+  background: var(--ov-surface);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  outline: 0;
+  transform: translateY(6px) scale(0.975);
+  transition: opacity 180ms ease, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ov-auth-layer[data-state='open'] .ov-auth-dialog {
+  opacity: 1;
+  transform: none;
+}
+
+.ov-auth-close {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+}
+
+.ov-auth-view {
+  position: relative;
+  animation: ov-view-in 160ms ease both;
+}
+
+.ov-auth-view h2 {
+  margin: 0;
+  color: var(--ov-text);
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.35px;
+  line-height: 32px;
+  text-align: center;
+}
+
+.ov-auth-subtitle {
+  max-width: 330px;
+  min-height: 48px;
+  margin: 9px auto 24px;
+  color: var(--ov-text);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 24px;
+  text-align: center;
+}
+
+.ov-auth-actions,
+.ov-auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.ov-provider-button,
+.ov-auth-input,
+.ov-auth-continue {
+  width: 100%;
+  height: 48px;
+}
+
+.ov-provider-button {
+  position: relative;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.ov-provider-inner {
+  display: contents;
+}
+
+.ov-provider-icon {
+  position: absolute;
+  left: 88px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+}
+
+.ov-provider-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.ov-auth-divider {
+  display: grid;
+  height: 16px;
+  margin: 18px 0 10px;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 20px;
+  color: var(--ov-text-secondary);
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.ov-auth-divider > :first-child,
+.ov-auth-divider > :last-child {
+  height: 1px;
+  background: var(--ov-border-strong);
+}
+
+.ov-auth-input {
+  min-width: 0;
+  padding: 0 16px;
+  border: 1px solid var(--ov-border);
+  border-radius: 999px;
+  outline: 0;
+  color: var(--ov-text);
+  background: var(--ov-surface-base);
+  font-size: 16px;
+  line-height: 24px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ov-auth-input:hover {
+  border-color: var(--ov-border-strong);
+}
+
+.ov-auth-input::placeholder {
+  color: var(--ov-text-secondary);
+  opacity: 1;
+}
+
+.ov-auth-back {
+  position: absolute;
+  top: -21px;
+  left: -29px;
+}
+
+.ov-auth-phone-view {
+  min-height: 380px;
+  padding-top: 42px;
+}
+
+.ov-phone-form {
+  margin-top: 38px;
+}
+
+/* Settings */
+
+.ov-settings-layer:not(.ov-settings-layer-images) {
+  --ov-lightweight-card: #f3f3f3;
+  --ov-lightweight-card-hover: #ececec;
+  --ov-lightweight-switch-track: #f3f3f3;
+  --ov-lightweight-switch-on: #0d0d0d;
+  --ov-lightweight-switch-knob: #fff;
+  --ov-lightweight-switch-knob-on: #fff;
+  background: rgba(0, 0, 0, .5);
+}
+
+:root[data-theme='dark'] .ov-settings-layer:not(.ov-settings-layer-images) {
+  --ov-surface: #212121;
+  --ov-surface-base: #212121;
+  --ov-lightweight-card: #2f2f2f;
+  --ov-lightweight-card-hover: #414141;
+  --ov-lightweight-switch-track: #414141;
+  --ov-lightweight-switch-on: #fff;
+  --ov-lightweight-switch-knob: #ececec;
+  --ov-lightweight-switch-knob-on: #0d0d0d;
+}
+
+.ov-settings-dialog {
+  display: grid;
+  width: min(448px, calc(100vw - 32px));
+  height: min(555px, calc(100dvh - 48px));
+  grid-template-rows: 68px minmax(0, 1fr);
+  overflow: hidden;
+  border: 0;
+  border-radius: 20px;
+  background: var(--ov-surface);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .22), 0 4px 16px rgba(0, 0, 0, .12);
+  opacity: 0;
+  outline: 0;
+  transform: translateY(6px) scale(0.975);
+  transition: opacity 180ms ease, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ov-settings-dialog:not(.ov-settings-dialog-images) {
+  display: block;
+  padding: 20px;
+}
+
+.ov-settings-swipe-viewport {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ov-settings-swipe-track {
+  display: flex;
+  width: 200%;
+  height: 100%;
+  transform: translateX(0);
+  transition: transform 300ms cubic-bezier(.2, 0, 0, 1);
+  will-change: transform;
+}
+
+.ov-settings-swipe-track[data-pane='data'] {
+  transform: translateX(-50%);
+}
+
+.ov-settings-screen {
+  display: grid;
+  width: 50%;
+  min-width: 0;
+  height: 100%;
+  flex: 0 0 50%;
+  grid-template-rows: 68px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.ov-settings-layer[data-state='open'] .ov-settings-dialog {
+  opacity: 1;
+  transform: none;
+}
+
+.ov-settings-header {
+  display: grid;
+  height: 68px;
+  padding: 12px 12px 8px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  border-bottom: 0;
+}
+
+.ov-settings-leading {
+  border: 1px solid var(--ov-border);
+  background: var(--ov-surface-base);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .1);
+}
+
+.ov-settings-header h2 {
+  margin: 0;
+  color: var(--ov-text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  text-align: center;
+}
+
+.ov-settings-body {
+  min-height: 0;
+  padding: 12px 16px 24px;
+  overflow: auto;
+}
+
+.ov-settings-main-pane,
+.ov-data-pane {
+  min-width: 0;
+}
+
+.ov-settings-row-group,
+.ov-settings-detail-trigger {
+  border: 0;
+  background: var(--ov-lightweight-card);
+}
+
+.ov-settings-row-group {
+  display: grid;
+  gap: 2px;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ov-settings-row {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 60px;
+  min-height: 60px;
+  padding: 8px 20px;
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  color: var(--ov-text);
+  background: var(--ov-lightweight-card);
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.ov-settings-row + .ov-settings-row {
+  border-top: 0;
+}
+
+.ov-settings-row-group .ov-settings-row:first-child {
+  border-radius: 24px 24px 4px 4px;
+}
+
+.ov-settings-row-group .ov-settings-row:last-child {
+  border-radius: 4px 4px 24px 24px;
+}
+
+.ov-settings-detail-trigger {
+  margin-top: 24px;
+  border-radius: 24px;
+}
+
+.ov-settings-row:hover,
+.ov-settings-detail-trigger:hover {
+  background: var(--ov-lightweight-card-hover);
+}
+
+.ov-settings-row-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  background: transparent;
+}
+
+.ov-settings-row-icon svg,
+.ov-settings-chevron svg,
+.ov-settings-expand svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.ov-settings-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+}
+
+.ov-settings-label {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.ov-settings-hint {
+  overflow: hidden;
+  color: var(--ov-text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-settings-select {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  outline: 0;
+  opacity: 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.ov-settings-chevron,
+.ov-settings-expand {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--ov-text-secondary);
+}
+
+.ov-settings-row:focus-within {
+  outline: 2px solid var(--ov-focus);
+  outline-offset: 2px;
+}
+
+.ov-data-pane {
+  display: grid;
+  gap: 32px;
+}
+
+.ov-data-pane .ov-switch-group {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ov-data-pane .ov-switch-row {
+  height: 53px;
+  min-height: 53px;
+  padding: 8px 20px;
+  gap: 16px;
+  border-radius: 28px;
+  background: var(--ov-lightweight-card);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.ov-data-pane .ov-switch-description {
+  margin: 12px 20px 0;
+  color: var(--ov-text-secondary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.ov-data-pane .ov-switch-row input {
+  width: 44px;
+  height: 26px;
+  flex-basis: 44px;
+  background: var(--ov-lightweight-switch-track);
+  transition-duration: 100ms;
+}
+
+.ov-data-pane .ov-switch-row input::after {
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background: var(--ov-lightweight-switch-knob);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .28);
+  transition-duration: 100ms;
+}
+
+.ov-data-pane .ov-switch-row input:checked {
+  background: var(--ov-lightweight-switch-on);
+}
+
+.ov-data-pane .ov-switch-row input:checked::after {
+  background: var(--ov-lightweight-switch-knob-on);
+  transform: translateX(18px);
+}
+
+.ov-switch-group {
+  padding: 15px 16px;
+  border: 1px solid var(--ov-border);
+  border-radius: 16px;
+  background: var(--ov-surface-base);
+}
+
+.ov-switch-row {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  color: var(--ov-text);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.ov-switch-row input {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  flex: 0 0 38px;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  outline: 0;
+  background: #b4b4b4;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.ov-switch-row input::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ov-surface-base);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
+  content: '';
+  transition: transform 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ov-switch-row input:checked {
+  background: var(--ov-primary);
+}
+
+.ov-switch-row input:checked::after {
+  transform: translateX(16px);
+}
+
+.ov-switch-description {
+  margin: 8px 0 0;
+  color: var(--ov-text-secondary);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.ov-switch-description a {
+  margin-left: 3px;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ov-save-status {
+  min-height: 18px;
+  margin: 0;
+  color: var(--ov-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* Header product card */
+
+.ov-product-card {
+  position: fixed;
+  z-index: 950;
+  width: min(320px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  border: 0;
+  border-radius: 16px;
+  background: var(--ov-surface);
+  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.08), 0 0 1px rgba(0, 0, 0, 0.62);
+  opacity: 0;
+  outline: 0;
+  transform: translateY(-4px) scale(0.985);
+  transform-origin: top left;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.ov-product-card:not([data-positioned]) {
+  visibility: hidden;
+}
+
+.ov-product-card[data-state='open'] {
+  opacity: 1;
+  transform: none;
+}
+
+.ov-product-card[data-state='closed'] {
+  pointer-events: none;
+}
+
+.ov-product-hero {
+  height: 126px;
+  background: url('/images-app/model-menu-watercolor.png') center / cover no-repeat;
+}
+
+.ov-product-content {
+  padding: 20px 16px 10px;
+}
+
+.ov-product-content h2 {
+  margin: 0 0 4px;
+  color: var(--ov-text);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 28px;
+}
+
+.ov-product-content p {
+  margin: 0;
+  color: var(--ov-text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.ov-product-actions {
+  display: flex;
+  min-height: 44px;
+  margin-top: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ov-product-action {
+  position: relative;
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+.ov-product-action::before {
+  position: absolute;
+  inset: -4px 0;
+  content: '';
+}
+
+@keyframes ov-view-in {
+  from { opacity: 0; transform: translateX(5px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 767px) {
+  .ov-modal-layer {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .ov-auth-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 12px);
+    padding: 30px 24px max(24px, env(safe-area-inset-bottom));
+    border-radius: 24px 24px 0 0;
+    transform: translateY(40px);
+  }
+
+  .ov-auth-layer[data-state='open'] .ov-auth-dialog {
+    transform: translateY(0);
+  }
+
+  .ov-provider-icon {
+    left: max(18px, calc(50% - 122px));
+  }
+
+  .ov-settings-dialog {
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    transform: translateY(24px);
+  }
+
+  .ov-settings-dialog:not(.ov-settings-dialog-images) {
+    padding: 0;
+  }
+
+  .ov-settings-layer[data-state='open'] .ov-settings-dialog {
+    transform: translateY(0);
+  }
+
+  .ov-settings-header {
+    height: 68px;
+    padding: 12px;
+  }
+
+  .ov-settings-body {
+    padding: 12px 16px 24px;
+  }
+
+  .ov-settings-row {
+    grid-template-columns: 24px minmax(0, 1fr) 24px;
+    padding-inline: 20px;
+  }
+
+  .ov-settings-hint {
+    display: block;
+  }
+
+  .ov-settings-select {
+    max-width: none;
+  }
+
+  .ov-product-card {
+    width: min(320px, calc(100vw - 16px));
+  }
+
+  .ov-product-hero {
+    display: none;
+  }
+
+  .ov-product-content {
+    padding-top: 16px;
+  }
+
+  .ov-product-action {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 380px) {
+  .ov-auth-dialog {
+    padding-inline: 18px;
+  }
+
+  .ov-auth-view h2 {
+    font-size: 22px;
+  }
+
+  .ov-provider-button {
+    font-size: 15px;
+  }
+
+  .ov-settings-row {
+    grid-template-columns: 24px minmax(0, 1fr) 24px;
+  }
+}
+
+/* The signed-out Images app uses the compact auth card from the live route,
+   rather than the wider generic home sheet. */
+.ov-auth-layer-images {
+  padding: 0;
+  background: rgba(220, 220, 220, .367);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.ov-auth-dialog.ov-auth-dialog-images {
+  width: 388px;
+  height: 583.1px;
+  max-height: calc(100dvh - 20px);
+  padding: 56px 24px 40px;
+  border-radius: 16px;
+  box-shadow: 0 8px 12px rgba(0, 0, 0, .08), 0 0 1px rgba(0, 0, 0, .62);
+}
+
+.ov-auth-dialog-images .ov-auth-close {
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+}
+
+.ov-auth-dialog-images .ov-auth-view h2 {
+  font-size: 32px;
+  font-weight: 400;
+  letter-spacing: -.5px;
+  line-height: 40px;
+}
+
+.ov-auth-dialog-images .ov-auth-subtitle {
+  min-height: 24px;
+  margin: 8px auto 40px;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.ov-auth-dialog-images .ov-auth-actions,
+.ov-auth-dialog-images .ov-auth-form {
+  gap: 12px;
+}
+
+.ov-auth-dialog-images .ov-provider-button,
+.ov-auth-dialog-images .ov-auth-input,
+.ov-auth-dialog-images .ov-auth-continue {
+  width: 100%;
+  height: 52px;
+}
+
+.ov-auth-dialog-images .ov-auth-input {
+  border-color: #8f8f8f;
+}
+
+.ov-auth-dialog-images .ov-provider-inner {
+  display: flex;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ov-auth-dialog-images .ov-provider-icon {
+  position: relative;
+  left: auto;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.ov-auth-dialog-images .ov-provider-icon svg {
+  position: absolute;
+  max-width: none;
+  max-height: none;
+}
+
+.ov-auth-dialog-images [data-auth-provider='google'] .ov-provider-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.ov-auth-dialog-images [data-auth-provider='apple'] .ov-provider-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ov-auth-dialog-images [data-auth-provider='phone'] .ov-provider-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.ov-auth-dialog-images .ov-auth-divider {
+  height: 24px;
+  margin: 21px 0 23px;
+}
+
+.ov-auth-dialog-images .ov-auth-form {
+  gap: 23px;
+}
+
+.ov-auth-dialog-images .ov-auth-input:focus-visible {
+  border-color: #0d0d0d;
+  outline: 0;
+  box-shadow: 0 0 0 1px #0d0d0d;
+}
+
+@media (min-width: 768px) {
+  .ov-auth-layer-images {
+    align-items: flex-start;
+  }
+
+  .ov-auth-dialog.ov-auth-dialog-images {
+    margin-top: max(16px, calc(50dvh - 309.2px));
+  }
+}
+
+@media (max-width: 767px) {
+  .ov-auth-dialog.ov-auth-dialog-images {
+    width: calc(100% - 20px);
+    height: 583.1px;
+    margin: 0 10px 10px;
+    padding: 56px 24px 40px;
+    border-radius: 16px;
+  }
+
+}
+
+/* Images route settings: two-column 680 × 420 desktop dialog. */
+.ov-settings-layer-images {
+  padding: 0;
+  background: rgba(220, 220, 220, .367);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.ov-settings-dialog.ov-settings-dialog-images {
+  position: relative;
+  display: grid;
+  width: 680px;
+  height: 420px;
+  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  border: 0;
+  border-radius: 16px;
+  background: var(--ov-surface);
+  box-shadow: 0 8px 12px rgba(0, 0, 0, .08), 0 0 1px rgba(0, 0, 0, .62);
+}
+
+.ov-settings-dialog.ov-settings-dialog-images:focus-visible {
+  outline: 0;
+}
+
+.ov-images-settings-header {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 0;
+  width: 180px;
+  height: 60px;
+  pointer-events: none;
+}
+
+.ov-images-settings-header > h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.ov-images-settings-nav {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  padding-top: 60px;
+  flex-direction: column;
+  border-right: 1px solid rgba(0, 0, 0, .05);
+}
+
+.ov-images-settings-close {
+  position: absolute;
+  top: 12px;
+  left: 10px;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  border-radius: 8px;
+  pointer-events: auto;
+}
+
+.ov-images-settings-tab {
+  display: flex;
+  width: calc(100% - 12px);
+  height: 36px;
+  margin-left: 6px;
+  padding: 0 10px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--ov-text);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+  transition: background-color 120ms ease, transform 75ms ease;
+}
+
+.ov-images-settings-tab:hover,
+.ov-images-settings-tab.is-active {
+  background: rgba(0, 0, 0, .04);
+}
+
+.ov-images-settings-tab:active {
+  transform: scale(.98);
+}
+
+.ov-images-settings-tab svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+
+.ov-images-settings-tab > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ov-images-settings-content {
+  min-width: 0;
+  overflow: auto;
+}
+
+.ov-images-settings-content > h2 {
+  position: relative;
+  height: 60px;
+  margin: 0;
+  padding: 16px;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 28px;
+}
+
+.ov-images-settings-content > h2::after,
+.ov-images-settings-row:first-child::after {
+  position: absolute;
+  right: 16px;
+  bottom: 0;
+  left: 16px;
+  height: 1px;
+  background: rgba(0, 0, 0, .05);
+  content: '';
+}
+
+.ov-images-settings-content > h2::after {
+  background: rgba(0, 0, 0, .1);
+}
+
+.ov-images-settings-general {
+  display: grid;
+}
+
+.ov-images-settings-row {
+  position: relative;
+  display: flex;
+  height: 60px;
+  padding: 0 16px;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  color: var(--ov-text);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.ov-images-settings-row:first-child {
+  border-bottom: 0;
+}
+
+.ov-images-settings-select {
+  display: flex;
+  height: 36px;
+  padding: 0 12px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  outline: 0;
+  color: var(--ov-text);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  line-height: 14px;
+  white-space: nowrap;
+  transition: background-color 100ms ease;
+}
+
+.ov-images-settings-select:hover,
+.ov-images-settings-select[aria-expanded='true'] {
+  background: rgba(0, 0, 0, .04);
+}
+
+.ov-images-settings-select > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.ov-images-settings-select.is-theme {
+  width: 74px;
+}
+
+.ov-images-settings-select.is-language {
+  width: 102px;
+}
+
+.ov-images-settings-select:focus-visible,
+.ov-images-settings-tab:focus-visible {
+  outline: 2px solid var(--ov-focus);
+  outline-offset: -2px;
+}
+
+.ov-images-settings-menu {
+  position: fixed;
+  z-index: 1200;
+  display: grid;
+  width: 220px;
+  max-height: calc(100dvh - 20px);
+  padding: 6px;
+  overflow: auto;
+  border: 0;
+  border-radius: 16px;
+  outline: 0;
+  background: var(--ov-surface);
+  box-shadow: 0 8px 12px rgba(0, 0, 0, .08), 0 0 1px rgba(0, 0, 0, .62);
+  opacity: 0;
+  transform: translateY(-3px) scale(.98);
+  transform-origin: top right;
+  transition: opacity 120ms ease, transform 120ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.ov-images-settings-menu[data-state='open'] {
+  opacity: 1;
+  transform: none;
+}
+
+.ov-images-settings-menu:focus-visible {
+  outline: 0;
+}
+
+.ov-images-settings-menu[data-state='closed'] {
+  pointer-events: none;
+}
+
+.ov-images-settings-option {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--ov-text);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+}
+
+.ov-images-settings-option:hover,
+.ov-images-settings-option.is-active,
+.ov-images-settings-option.is-selected {
+  background: rgba(0, 0, 0, .04);
+}
+
+.ov-images-settings-option > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.ov-images-data-pane {
+  position: relative;
+  padding: 0 16px 20px;
+}
+
+.ov-images-switch-group {
+  padding: 10px 0 9px;
+  border-bottom: 1px solid rgba(0, 0, 0, .05);
+}
+
+.ov-images-switch-group .ov-switch-row {
+  min-height: 20px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.ov-images-switch-group .ov-switch-description {
+  max-width: 430px;
+  margin: 4px 42px 0 0;
+  color: #8f8f8f;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.ov-images-switch-group .ov-switch-description a {
+  margin-left: 0;
+}
+
+.ov-images-data-pane h3 {
+  height: 60px;
+  margin: 16px 0 0;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, .1);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 28px;
+}
+
+.ov-images-switch-group:last-of-type {
+  border-bottom: 0;
+}
+
+.ov-images-data-pane .ov-switch-row input {
+  width: 32px;
+  height: 20px;
+  flex: 0 0 32px;
+  background: #d9d9d9;
+  transition-duration: 100ms;
+}
+
+.ov-images-data-pane .ov-switch-row input::after {
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  transition-duration: 100ms;
+}
+
+.ov-images-data-pane .ov-switch-row input:checked {
+  background: #3a83f7;
+}
+
+.ov-images-data-pane .ov-switch-row input:checked::after {
+  transform: translateX(12px);
+}
+
+.ov-images-data-pane .ov-save-status {
+  position: absolute;
+  top: 8px;
+  right: 58px;
+}
+
+:root[data-theme='dark'] .ov-images-settings-nav,
+:root[data-theme='dark'] .ov-images-settings-header {
+  border-color: rgba(255, 255, 255, .08);
+}
+
+:root[data-theme='dark'] .ov-images-settings-tab:hover,
+:root[data-theme='dark'] .ov-images-settings-tab.is-active,
+:root[data-theme='dark'] .ov-images-settings-select:hover,
+:root[data-theme='dark'] .ov-images-settings-select[aria-expanded='true'],
+:root[data-theme='dark'] .ov-images-settings-option:hover,
+:root[data-theme='dark'] .ov-images-settings-option.is-active,
+:root[data-theme='dark'] .ov-images-settings-option.is-selected {
+  background: rgba(255, 255, 255, .06);
+}
+
+:root[data-theme='dark'] .ov-images-settings-close:hover {
+  background: #414141;
+}
+
+:root[data-theme='dark'] .ov-images-settings-content > h2::after,
+:root[data-theme='dark'] .ov-images-data-pane h3 {
+  border-color: rgba(255, 255, 255, .12);
+  background-color: transparent;
+}
+
+:root[data-theme='dark'] .ov-images-settings-content > h2::after {
+  background: rgba(255, 255, 255, .12);
+}
+
+:root[data-theme='dark'] .ov-images-settings-row:first-child::after,
+:root[data-theme='dark'] .ov-images-switch-group {
+  border-color: rgba(255, 255, 255, .07);
+  background: transparent;
+}
+
+:root[data-theme='dark'] .ov-images-settings-row:first-child::after {
+  background: rgba(255, 255, 255, .07);
+}
+
+:root[data-theme='dark'] .ov-images-data-pane .ov-switch-row input {
+  background: #565656;
+}
+
+:root[data-theme='dark'] .ov-images-data-pane .ov-switch-row input:checked {
+  background: #3a83f7;
+}
+
+@media (min-width: 768px) {
+  .ov-settings-layer-images {
+    align-items: flex-start;
+  }
+
+  .ov-settings-dialog.ov-settings-dialog-images {
+    margin-top: max(20px, calc((100dvh - 420px) * 4 / 9));
+  }
+}
+
+@media (max-width: 767px) {
+  .ov-settings-layer-images {
+    align-items: center;
+  }
+
+  .ov-settings-dialog.ov-settings-dialog-images {
+    width: calc(100% - 20px);
+    height: auto;
+    min-height: 60dvh;
+    max-height: 85dvh;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 57px 49px minmax(0, 1fr);
+    border: 0;
+    border-radius: 16px;
+  }
+
+  .ov-images-settings-header {
+    position: relative;
+    display: flex;
+    width: auto;
+    height: 57px;
+    padding: 0 10px 0 16px;
+    grid-row: 1;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(0, 0, 0, .05);
+    pointer-events: auto;
+  }
+
+  .ov-images-settings-header > h2 {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 28px;
+  }
+
+  .ov-images-settings-close {
+    position: static;
+    flex: 0 0 36px;
+  }
+
+  .ov-images-settings-nav {
+    display: flex;
+    height: 49px;
+    padding: 6px;
+    grid-row: 2;
+    flex-direction: row;
+    align-items: flex-start;
+    border-right: 0;
+    border-bottom: 1px solid rgba(0, 0, 0, .05);
+  }
+
+  .ov-images-settings-tab {
+    width: 74px;
+    margin-left: 0;
+    flex: 0 0 74px;
+    gap: 6px;
+  }
+
+  .ov-images-settings-tab + .ov-images-settings-tab {
+    width: 102px;
+    flex-basis: 102px;
+  }
+
+  .ov-images-settings-content {
+    grid-row: 3;
+  }
+
+  .ov-images-settings-content > h2,
+  .ov-images-settings-row {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .ov-images-settings-content > h2 {
+    font-size: 18px;
+  }
+
+  .ov-images-data-pane {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .ov-images-switch-group {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .ov-images-switch-group .ov-switch-description {
+    max-width: none;
+    margin-right: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-modal-layer,
+  .ov-auth-dialog,
+  .ov-settings-dialog,
+  .ov-settings-swipe-track,
+  .ov-product-card,
+  .ov-button,
+  .ov-icon-button,
+  .ov-switch-row input,
+  .ov-switch-row input::after {
+    transition-duration: 1ms;
+  }
+
+  .ov-auth-view,
+  .ov-settings-main-pane,
+  .ov-data-pane {
+    animation: none;
+  }
+}

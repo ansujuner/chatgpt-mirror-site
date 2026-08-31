@@ -1,0 +1,81 @@
+.session-dialog-layer {
+  align-items: center;
+  background: rgba(0, 0, 0, .38);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 20px;
+  position: fixed;
+  z-index: 1000;
+}
+
+.session-dialog {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, .12);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .22);
+  color: #0d0d0d;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif;
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  padding: 22px;
+  width: min(100%, 500px);
+}
+
+.session-dialog-header { align-items: flex-start; display: flex; gap: 18px; justify-content: space-between; }
+.session-dialog-header h2 { font-size: 20px; font-weight: 600; letter-spacing: -.25px; line-height: 28px; margin: 0 0 4px; }
+.session-dialog-header p { color: #676767; font-size: 14px; line-height: 20px; margin: 0; }
+.session-dialog-close { align-items: center; background: transparent; border: 0; border-radius: 8px; color: #676767; cursor: pointer; display: flex; flex: 0 0 34px; height: 34px; justify-content: center; padding: 7px; width: 34px; }
+.session-dialog-close:hover:not(:disabled) { background: #f2f2f2; color: #0d0d0d; }
+.session-dialog-close svg { fill: none; height: 20px; stroke: currentColor; stroke-linecap: round; stroke-width: 1.6; width: 20px; }
+
+.session-current-account { align-items: center; background: #f7f7f7; border: 1px solid rgba(0, 0, 0, .08); border-radius: 12px; display: flex; gap: 10px; margin-top: 18px; padding: 10px 12px; }
+.session-current-avatar { align-items: center; background: #7d63c6; border-radius: 50%; color: #fff; display: flex; flex: 0 0 30px; font-size: 11px; font-weight: 600; height: 30px; justify-content: center; overflow: hidden; }
+.session-current-account > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.session-current-account strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-current-account small { color: #676767; font-size: 12px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-current-account em { color: #676767; font-size: 12px; font-style: normal; white-space: nowrap; }
+
+.session-dialog form { margin-top: 20px; }
+.session-dialog form > label { display: block; font-size: 14px; font-weight: 500; line-height: 20px; margin-bottom: 7px; }
+.session-input-wrap { position: relative; }
+.session-input-wrap textarea { background: #fff; border: 1px solid #c7c7c7; border-radius: 11px; color: #0d0d0d; display: block; font: 13px/19px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; min-height: 118px; outline: none; padding: 12px 42px 12px 12px; resize: vertical; width: 100%; }
+.session-input-wrap textarea:focus { border-color: #0d0d0d; box-shadow: 0 0 0 1px #0d0d0d; }
+.session-input-wrap textarea[aria-invalid='true'] { border-color: #d00e17; }
+.session-input-wrap.is-masked textarea { -webkit-text-security: disc; font-family: system-ui, sans-serif; letter-spacing: 2px; }
+.session-input-wrap > button { align-items: center; background: transparent; border: 0; border-radius: 7px; color: #676767; cursor: pointer; display: flex; height: 32px; justify-content: center; padding: 6px; position: absolute; right: 7px; top: 7px; width: 32px; }
+.session-input-wrap > button:hover:not(:disabled) { background: #f2f2f2; color: #0d0d0d; }
+.session-input-wrap > button svg { fill: none; height: 19px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.45; width: 19px; }
+
+.session-login-error { color: #d00e17; font-size: 13px; line-height: 18px; margin: 7px 0 0; }
+.session-login-note { color: #676767; font-size: 12px; line-height: 18px; margin: 9px 0 0; }
+.session-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+.session-dialog-actions button { align-items: center; background: #fff; border: 1px solid rgba(0, 0, 0, .16); border-radius: 999px; color: #0d0d0d; cursor: pointer; display: flex; font-size: 14px; font-weight: 500; gap: 8px; height: 38px; justify-content: center; min-width: 72px; padding: 0 16px; }
+.session-dialog-actions button:hover:not(:disabled) { background: #f2f2f2; }
+.session-dialog-actions button.is-primary { background: #0d0d0d; border-color: #0d0d0d; color: #fff; min-width: 104px; }
+.session-dialog-actions button.is-primary:hover:not(:disabled) { background: #2b2b2b; }
+.session-dialog button:disabled, .session-dialog textarea:disabled { cursor: default; opacity: .55; }
+.session-button-spinner { animation: session-spinner .7s linear infinite; border: 2px solid rgba(255, 255, 255, .45); border-radius: 50%; border-top-color: #fff; height: 15px; width: 15px; }
+
+@keyframes session-spinner { to { transform: rotate(360deg); } }
+
+@media (max-width: 560px) {
+  .session-dialog-layer { align-items: flex-end; padding: 0; }
+  .session-dialog { border-bottom: 0; border-radius: 20px 20px 0 0; max-height: calc(100dvh - 18px); padding: 20px 18px calc(18px + env(safe-area-inset-bottom)); width: 100%; }
+  .session-input-wrap textarea { min-height: 106px; }
+}
+
+:root[data-theme='dark'] .session-dialog { background: #2f2f2f; border-color: rgba(255, 255, 255, .12); color: #ececec; }
+:root[data-theme='dark'] .session-dialog-header p,
+:root[data-theme='dark'] .session-login-note,
+:root[data-theme='dark'] .session-current-account small,
+:root[data-theme='dark'] .session-current-account em { color: #b4b4b4; }
+:root[data-theme='dark'] .session-current-account { background: #212121; border-color: rgba(255, 255, 255, .1); }
+:root[data-theme='dark'] .session-input-wrap textarea { background: #212121; border-color: #676767; color: #ececec; }
+:root[data-theme='dark'] .session-dialog-close,
+:root[data-theme='dark'] .session-input-wrap > button { color: #b4b4b4; }
+:root[data-theme='dark'] .session-dialog-close:hover:not(:disabled),
+:root[data-theme='dark'] .session-input-wrap > button:hover:not(:disabled),
+:root[data-theme='dark'] .session-dialog-actions button:hover:not(:disabled) { background: #414141; color: #ececec; }
+:root[data-theme='dark'] .session-dialog-actions button { background: #2f2f2f; border-color: rgba(255, 255, 255, .18); color: #ececec; }
+:root[data-theme='dark'] .session-dialog-actions button.is-primary { background: #ececec; border-color: #ececec; color: #0d0d0d; }

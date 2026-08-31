@@ -1,0 +1,7 @@
+{
+  "available_count": 2,
+  "credits": [
+    {"id": "fixture-credit-id-must-not-leak", "status": "available"},
+    {"id": "fixture-credit-id-2-must-not-leak", "status": "available"}
+  ]
+}

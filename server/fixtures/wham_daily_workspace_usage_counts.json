@@ -1,0 +1,78 @@
+{
+  "group_by": "day",
+  "data": [
+    {
+      "date": "2026-08-29",
+      "totals": {
+        "users": 1,
+        "threads": 2,
+        "turns": 3,
+        "credits": 1.75,
+        "uncached_text_input_tokens": 1200,
+        "cached_text_input_tokens": 300,
+        "text_output_tokens": 450,
+        "text_total_tokens": 1950
+      },
+      "clients": [
+        {
+          "client_id": "codex_cloud",
+          "users": 1,
+          "threads": 2,
+          "turns": 3,
+          "credits": 1.75,
+          "uncached_text_input_tokens": 1200,
+          "cached_text_input_tokens": 300,
+          "text_output_tokens": 450,
+          "text_total_tokens": 1950,
+          "email": "client-private-email-must-not-leak@example.test"
+        }
+      ],
+      "models": [
+        {
+          "model": "gpt-5.6-codex",
+          "users": 1,
+          "threads": 2,
+          "turns": 3,
+          "credits": 1.75,
+          "private_user_id": "model-user-must-not-leak"
+        }
+      ]
+    },
+    {
+      "date": "2026-08-30",
+      "totals": {
+        "users": 1,
+        "threads": 1,
+        "turns": 2,
+        "credits": 2,
+        "uncached_text_input_tokens": 900,
+        "cached_text_input_tokens": 100,
+        "text_output_tokens": 250,
+        "text_total_tokens": 1250
+      },
+      "clients": [
+        {
+          "client_id": "chatgpt_work",
+          "users": 1,
+          "threads": 1,
+          "turns": 2,
+          "credits": 2,
+          "uncached_text_input_tokens": 900,
+          "cached_text_input_tokens": 100,
+          "text_output_tokens": 250,
+          "text_total_tokens": 1250
+        }
+      ],
+      "models": [
+        {
+          "model": "gpt-5.6-codex",
+          "users": 1,
+          "threads": 1,
+          "turns": 2,
+          "credits": 2
+        }
+      ]
+    }
+  ],
+  "workspace_user_email": "counts-private-email-must-not-leak@example.test"
+}

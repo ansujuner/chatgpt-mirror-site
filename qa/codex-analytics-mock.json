@@ -1,0 +1,180 @@
+{
+  "ok": true,
+  "live": true,
+  "authenticated": true,
+  "availability": "available",
+  "source": "chatgpt-wham",
+  "fetchedAt": "2026-08-31T11:31:01Z",
+  "planType": "pro",
+  "quota": {
+    "remainingPercent": 18,
+    "primary": {
+      "usedPercent": 82.5,
+      "remainingPercent": 18,
+      "windowDurationMins": 300,
+      "resetsAt": 2000000000,
+      "resetAfterSeconds": 912
+    },
+    "secondary": {
+      "usedPercent": 41.0,
+      "remainingPercent": 59,
+      "windowDurationMins": 10080,
+      "resetsAt": 2000400000,
+      "resetAfterSeconds": 400000
+    },
+    "allowed": false,
+    "limitReached": true,
+    "effectiveLimitReached": false,
+    "resetCredits": {
+      "availableCount": 2
+    },
+    "credits": {
+      "balance": 27.5,
+      "currency": "credits",
+      "unlimited": false,
+      "hasCredits": true,
+      "overageLimitReached": false
+    },
+    "spendControl": {
+      "allowed": true,
+      "reached": false,
+      "individualLimit": {
+        "limit": 100.0,
+        "used": 25.0,
+        "remaining": 75.0,
+        "resetAt": 2000500000.0,
+        "unit": "credits"
+      }
+    },
+    "reachedType": "codex_five_hour"
+  },
+  "rateLimits": {
+    "primary": {
+      "usedPercent": 82.5,
+      "remainingPercent": 18,
+      "windowDurationMins": 300,
+      "resetsAt": 2000000000,
+      "resetAfterSeconds": 912
+    },
+    "secondary": {
+      "usedPercent": 41.0,
+      "remainingPercent": 59,
+      "windowDurationMins": 10080,
+      "resetsAt": 2000400000,
+      "resetAfterSeconds": 400000
+    }
+  },
+  "usage": {
+    "availability": "available",
+    "units": "credits",
+    "groupBy": "day",
+    "summary": {
+      "rangeCredits": 3.75,
+      "apiEquivalentUsd": 0.15
+    },
+    "dailyUsageBuckets": [
+      {
+        "date": "2026-08-29",
+        "credits": 1.75,
+        "apiEquivalentUsd": 0.07,
+        "models": [
+          {
+            "model": "gpt-5.6-codex",
+            "speed": "standard",
+            "credits": 1.75,
+            "apiEquivalentUsd": 0.07
+          }
+        ],
+        "productSurfaceUsageValues": {
+          "codex_cloud": 1.25,
+          "chatgpt_work": 0.5
+        },
+        "productSurfaceApiEquivalentUsd": {
+          "codex_cloud": 0.05,
+          "chatgpt_work": 0.02
+        },
+        "surfaces": [
+          {
+            "surface": "codex_cloud",
+            "credits": 1.25,
+            "apiEquivalentUsd": 0.05
+          },
+          {
+            "surface": "chatgpt_work",
+            "credits": 0.5,
+            "apiEquivalentUsd": 0.02
+          }
+        ]
+      },
+      {
+        "date": "2026-08-30",
+        "credits": 2.0,
+        "apiEquivalentUsd": 0.08,
+        "models": [
+          {
+            "model": "gpt-5.6-codex",
+            "speed": "fast",
+            "credits": 2.0,
+            "apiEquivalentUsd": 0.08
+          }
+        ],
+        "productSurfaceUsageValues": {
+          "chatgpt_work": 2.0
+        },
+        "productSurfaceApiEquivalentUsd": {
+          "chatgpt_work": 0.08
+        },
+        "surfaces": [
+          {
+            "surface": "chatgpt_work",
+            "credits": 2.0,
+            "apiEquivalentUsd": 0.08
+          }
+        ]
+      }
+    ],
+    "pricing": {
+      "kind": "nominal_api_equivalent",
+      "estimated": true,
+      "creditsPerUsd": 25.0,
+      "currency": "USD",
+      "asOf": "2026-08-31",
+      "source": "https://help.openai.com/en/articles/11481834",
+      "apiPricingSource": "https://developers.openai.com/api/docs/pricing",
+      "sourceUrls": [
+        "https://help.openai.com/en/articles/11481834",
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/all"
+      ],
+      "methodology": "credits / creditsPerUsd",
+      "available": true,
+      "note": "Nominal Standard-rate API-equivalent estimate only; this is not an actual API bill.",
+      "limitations": [
+        "Fast or priority processing can apply 2x or 2.5x multipliers.",
+        "WHAM does not expose input, cached-input, output, or reasoning-token quantities in this response.",
+        "Long-context and tool fees can differ from this nominal estimate."
+      ]
+    },
+    "scope": "personal"
+  },
+  "workspace": {
+    "scope": "personal",
+    "remainingBalance": {
+      "availability": "unavailable",
+      "balance": null,
+      "expiringBalanceDetails": []
+    },
+    "monthlyUsage": {
+      "availability": "not_applicable",
+      "kind": null
+    }
+  },
+  "upstream": {
+    "usage": "available",
+    "resetCredits": "available",
+    "dailyUsage": "available",
+    "remainingBalance": "unavailable",
+    "workspaceMonthlyUsage": "not_applicable",
+    "optionalErrors": {}
+  }
+}

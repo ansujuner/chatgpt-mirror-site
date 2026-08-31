@@ -1,0 +1,26 @@
+{
+  "units": "credits",
+  "group_by": "day",
+  "data": [
+    {
+      "date": "2026-08-29",
+      "product_surface_usage_values": {
+        "codex_cloud": 1.25,
+        "chatgpt_work": 0.5
+      },
+      "models": [
+        {"model": "gpt-5.6-codex", "speed": "standard", "credits": 1.75}
+      ]
+    },
+    {
+      "date": "2026-08-30",
+      "product_surface_usage_values": {
+        "chatgpt_work": 2
+      },
+      "models": [
+        {"model": "gpt-5.6-codex", "speed": "fast", "credits": 2}
+      ]
+    }
+  ],
+  "workspace_user_email": "fixture-private-email-must-not-leak@example.test"
+}

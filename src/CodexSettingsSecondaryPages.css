@@ -1,0 +1,625 @@
+.cssp-page {
+  --cssp-text: var(--cca-text, var(--ps-text, #0d0d0d));
+  --cssp-secondary: var(--cca-muted, var(--ps-text-secondary, #666));
+  --cssp-tertiary: var(--ps-text-tertiary, #8a8a8a);
+  --cssp-border: var(--cca-border, var(--ps-border-default, rgba(13, 13, 13, .11)));
+  --cssp-border-soft: var(--ps-border, rgba(13, 13, 13, .075));
+  --cssp-bg: var(--ps-bg, #fff);
+  --cssp-muted-bg: var(--ps-bg-muted, #f7f7f8);
+  --cssp-hover: var(--ps-bg-hover, #f1f1f2);
+  --cssp-blue: #0285ff;
+  width: 100%;
+  max-width: 1280px;
+  min-width: 0;
+  min-height: 100%;
+  padding: 32px 48px 72px 16px;
+  margin: 0 auto;
+  color: var(--cssp-text);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.42;
+}
+
+.cssp-page,
+.cssp-page * { box-sizing: border-box; }
+.cssp-page button,
+.cssp-page input,
+.cssp-page select { color: inherit; font: inherit; }
+.cssp-page button { -webkit-tap-highlight-color: transparent; }
+.cssp-page h1,
+.cssp-page h2,
+.cssp-page h3,
+.cssp-page p { margin: 0; }
+
+.cssp-page-header {
+  min-height: 72px;
+  padding: 4px 0 18px;
+  border-bottom: 1px solid var(--cssp-border);
+}
+.cssp-page-header h1 { font-size: 20px; font-weight: 600; letter-spacing: -.32px; line-height: 28px; }
+.cssp-page-header p { max-width: 680px; margin-top: 4px; color: var(--cssp-secondary); font-size: 13px; line-height: 19px; }
+
+.cssp-button {
+  display: inline-flex;
+  min-height: 34px;
+  padding: 6px 13px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--cssp-border);
+  border-radius: 9px;
+  color: var(--cssp-text);
+  background: var(--cssp-bg);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .02);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.cssp-button:hover:not(:disabled) { background: var(--cssp-hover); }
+.cssp-button:active:not(:disabled) { transform: translateY(.5px); }
+.cssp-button.is-primary { border-color: #111; color: #fff; background: #111; }
+.cssp-button.is-primary:hover:not(:disabled) { background: #2b2b2b; }
+.cssp-button.is-danger { border-color: rgba(229, 32, 54, .34); color: #d30d29; background: transparent; }
+.cssp-button.is-danger:hover:not(:disabled) { background: rgba(229, 32, 54, .06); }
+.cssp-button:disabled { cursor: not-allowed; opacity: .43; }
+
+.cssp-icon-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.cssp-icon-button:hover { background: var(--cssp-hover); }
+.cssp-button:focus-visible,
+.cssp-icon-button:focus-visible,
+.cssp-switch:focus-visible,
+.cssp-inline-link:focus-visible,
+.cssp-segmented button:focus-visible,
+.cssp-back-link:focus-visible,
+.cssp-tabs button:focus-visible,
+.cssp-repo-mobile-card:focus-visible,
+.cssp-token-mobile-card:focus-visible {
+  outline: 2px solid var(--cssp-text);
+  outline-offset: 2px;
+}
+
+.cssp-switch {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 20px;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: #dededf;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.cssp-switch > span {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .24);
+  transform: translateX(0);
+  transition: transform .16s ease;
+}
+.cssp-switch[data-state='checked'] { background: var(--cssp-blue); }
+.cssp-switch[data-state='checked'] > span { transform: translateX(12px); }
+.cssp-switch:disabled { cursor: not-allowed; opacity: .45; }
+
+.cssp-notice {
+  display: flex;
+  min-height: 50px;
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid rgba(2, 132, 255, .13);
+  border-radius: 10px;
+  color: #3f505f;
+  background: #f3f8fc;
+  font-size: 13px;
+  line-height: 19px;
+}
+.cssp-notice > svg { margin-top: 1px; flex: 0 0 auto; color: #1574c6; }
+.cssp-notice > div { min-width: 0; }
+.cssp-notice strong { display: block; margin-bottom: 1px; color: var(--cssp-text); font-weight: 600; }
+.cssp-notice.is-warning { border-color: rgba(191, 132, 21, .17); color: #664d20; background: #fff8e8; }
+.cssp-notice.is-warning > svg { color: #a46c00; }
+.cssp-notice.is-success { border-color: rgba(17, 138, 75, .15); color: #286044; background: #f1faf5; }
+.cssp-notice.is-success > svg { color: #16854d; }
+
+.cssp-inline-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.cssp-inline-link:hover { opacity: .7; }
+
+.cssp-section-block { margin-top: 30px; }
+.cssp-section-heading {
+  display: flex;
+  min-height: 56px;
+  padding: 4px 0 12px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--cssp-border);
+}
+.cssp-section-heading h2 { font-size: 16px; font-weight: 600; letter-spacing: -.15px; line-height: 23px; }
+.cssp-section-heading p { margin-top: 2px; color: var(--cssp-secondary); font-size: 12px; line-height: 18px; }
+
+.cssp-settings-card,
+.cssp-data-row-card { border-bottom: 1px solid var(--cssp-border-soft); }
+.cssp-setting-row {
+  display: flex;
+  width: 100%;
+  min-height: 68px;
+  padding: 11px 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  border-bottom: 1px solid var(--cssp-border-soft);
+}
+.cssp-setting-row:last-child { border-bottom: 0; }
+.cssp-setting-copy { min-width: 0; flex: 1; }
+.cssp-setting-title { font-size: 13px; font-weight: 500; line-height: 20px; }
+.cssp-setting-description { max-width: 610px; margin-top: 2px; color: var(--cssp-tertiary); font-size: 12px; line-height: 17px; text-wrap: pretty; }
+.cssp-setting-action { display: flex; flex: 0 0 auto; align-items: center; }
+
+.cssp-native-select,
+.cssp-severity-select,
+.cssp-full-select {
+  position: relative;
+  display: flex;
+  height: 34px;
+  min-width: 126px;
+  align-items: center;
+  border: 1px solid var(--cssp-border);
+  border-radius: 8px;
+  background: var(--cssp-bg);
+}
+.cssp-native-select select,
+.cssp-severity-select select,
+.cssp-full-select select {
+  width: 100%;
+  height: 100%;
+  padding: 0 31px 0 10px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+.cssp-native-select > svg,
+.cssp-severity-select > svg,
+.cssp-full-select > svg { position: absolute; right: 9px; pointer-events: none; color: var(--cssp-secondary); }
+.cssp-native-select:has(select:focus-visible),
+.cssp-severity-select:has(select:focus-visible),
+.cssp-full-select:has(select:focus-visible) { outline: 2px solid var(--cssp-text); outline-offset: 2px; }
+.cssp-native-select:has(select:disabled),
+.cssp-severity-select:has(select:disabled) { opacity: .45; }
+
+.cssp-segmented {
+  display: inline-flex;
+  min-height: 34px;
+  padding: 3px;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid var(--cssp-border);
+  border-radius: 9px;
+  background: #f5f5f6;
+}
+.cssp-segmented button {
+  display: inline-flex;
+  min-height: 26px;
+  padding: 3px 10px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--cssp-secondary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+.cssp-segmented button.is-active { color: var(--cssp-text); background: var(--cssp-bg); box-shadow: 0 1px 3px rgba(0, 0, 0, .12); }
+
+.cssp-search-field {
+  position: relative;
+  display: flex;
+  width: min(100%, 390px);
+  height: 36px;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid var(--cssp-border);
+  border-radius: 9px;
+  background: var(--cssp-bg);
+}
+.cssp-search-field > svg { margin-left: 10px; flex: 0 0 auto; color: var(--cssp-tertiary); }
+.cssp-search-field input { width: 100%; min-width: 0; height: 100%; padding: 0 10px 0 8px; border: 0; outline: 0; background: transparent; font-size: 12px; }
+.cssp-search-field input::placeholder { color: #9a9a9a; }
+.cssp-search-field:focus-within { border-color: rgba(13, 13, 13, .32); box-shadow: 0 0 0 2px rgba(13, 13, 13, .05); }
+.cssp-search-field > button { display: grid; width: 29px; height: 29px; margin-right: 3px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.cssp-search-field > button:hover { background: var(--cssp-hover); }
+
+.cssp-inline-checkbox { display: inline-flex; margin-left: auto; align-items: center; gap: 7px; color: var(--cssp-secondary); font-size: 12px; white-space: nowrap; }
+.cssp-inline-checkbox input { width: 15px; height: 15px; margin: 0; accent-color: #111; }
+
+/* Code review */
+.cssp-code-review-page { max-width: 1280px; }
+.cssp-code-review-page .cssp-page-header { min-height: 56px; padding: 4px 0 0; border-bottom: 0; }
+.cssp-code-review-page .cssp-page-header h1 { font-weight: 500; }
+.cssp-code-review-page .cssp-page-header h1,
+.cssp-code-review-page .cssp-page-header p { transform: translateY(-6px); }
+.cssp-review-notice { display: flex; min-height: 69px; margin-top: 20px; padding: 14px 23px; align-items: center; gap: 12px; border: 1px solid #e7e7e7; border-radius: 6px; color: #606060; background: #f1f1f1; font-size: 13px; line-height: 18px; }
+.cssp-review-notice > svg { flex: none; color: #8a8a8a; }
+.cssp-code-review-page .cssp-section-block { margin-top: 26px; }
+.cssp-code-review-page .cssp-section-heading { min-height: 51px; padding: 0 0 11px; align-items: flex-end; border-bottom: 0; }
+.cssp-code-review-page .cssp-settings-card { overflow: hidden; border: 1px solid var(--cssp-border); border-radius: 6px; }
+.cssp-code-review-page .cssp-settings-card .cssp-setting-row { min-height: 64px; padding: 10px 12px; }
+.cssp-code-review-page .cssp-settings-card .cssp-setting-row:not(:last-child) { border-bottom: 1px solid var(--cssp-border); }
+.cssp-code-review-page .cssp-repositories-section { margin-top: 24px; }
+.cssp-code-review-page .cssp-repositories-section .cssp-section-heading { min-height: 72px; padding: 0; align-items: flex-start; }
+.cssp-repo-toolbar { display: flex; padding: 0 0 23px; flex-wrap: wrap; align-items: center; gap: 10px; }
+.cssp-repo-toolbar .cssp-search-field { width: 337px; flex: none; }
+.cssp-hide-archived { display: flex; margin-left: auto; align-items: center; gap: 10px; color: var(--cssp-secondary); font-size: 12px; white-space: nowrap; }
+.cssp-gitlab-mark { display: inline-grid; width: 14px; height: 14px; place-items: center; color: #e24329; font-size: 11px; transform: rotate(45deg); }
+.cssp-repo-table-wrap,
+.cssp-token-table-wrap { overflow-x: auto; border: 1px solid var(--cssp-border); border-radius: 11px; background: var(--cssp-bg); }
+.cssp-token-table-wrap:has(.cssp-action-menu) { padding-bottom: 48px; }
+.cssp-repo-table,
+.cssp-token-table { width: 100%; border-collapse: collapse; table-layout: fixed; text-align: left; }
+.cssp-repo-table { min-width: 880px; }
+.cssp-repo-table th,
+.cssp-token-table th { height: 39px; padding: 8px 10px; border-bottom: 1px solid var(--cssp-border); color: var(--cssp-tertiary); background: #fafafa; font-size: 10.5px; font-weight: 500; white-space: nowrap; }
+.cssp-repo-table th:first-child { width: 24%; padding-left: 14px; }
+.cssp-repo-table th:nth-child(2) { width: 9%; }
+.cssp-repo-table th:nth-child(3) { width: 14%; }
+.cssp-repo-table th:nth-child(4) { width: 17%; }
+.cssp-repo-table th:nth-child(5) { width: 15%; }
+.cssp-repo-table th:nth-child(6) { width: 16%; }
+.cssp-repo-table th:last-child { width: 36px; }
+.cssp-repo-table td,
+.cssp-token-table td { height: 57px; padding: 8px 10px; border-bottom: 1px solid var(--cssp-border-soft); color: var(--cssp-secondary); font-size: 12px; vertical-align: middle; }
+.cssp-repo-table tbody tr:last-child td,
+.cssp-token-table tbody tr:last-child td { border-bottom: 0; }
+.cssp-repo-table tbody tr:not(.cssp-empty-row),
+.cssp-token-table tbody tr:not(.cssp-empty-row) { cursor: pointer; }
+.cssp-repo-table tbody tr:not(.cssp-empty-row):hover,
+.cssp-token-table tbody tr:not(.cssp-empty-row):hover { background: #fafafa; }
+.cssp-repo-table td:first-child,
+.cssp-token-table td:first-child { display: flex; min-width: 0; align-items: center; gap: 9px; color: var(--cssp-text); }
+.cssp-repo-table td:first-child > div,
+.cssp-token-table td:first-child > div { display: flex; min-width: 0; flex-direction: column; }
+.cssp-repo-table td:first-child b,
+.cssp-token-table td:first-child b { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.cssp-repo-table td:first-child small { color: var(--cssp-tertiary); font-size: 10px; }
+.cssp-repo-icon,
+.cssp-token-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  color: #555;
+  background: var(--cssp-muted-bg);
+}
+.cssp-muted-value { color: var(--cssp-secondary); }
+.cssp-updater { display: inline-flex; align-items: center; gap: 6px; }
+.cssp-updater i { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; color: #fff; background: #76543c; font-style: normal; font-size: 8px; }
+.cssp-empty-row td { display: table-cell !important; height: 40px !important; color: var(--cssp-tertiary) !important; text-align: left; }
+.cssp-max-note { margin-top: 9px !important; color: var(--cssp-tertiary); font-size: 10px; text-align: right; }
+.cssp-repo-mobile-list,
+.cssp-token-mobile-list { display: none; }
+
+/* Repository detail */
+.cssp-repository-detail { max-width: 1280px; }
+.cssp-back-link { display: inline-flex; min-height: 32px; margin: -2px 0 15px -7px; padding: 5px 7px; align-items: center; gap: 4px; border: 0; border-radius: 7px; color: var(--cssp-secondary); background: transparent; cursor: pointer; font-size: 12px; }
+.cssp-back-link:hover { color: var(--cssp-text); background: var(--cssp-hover); }
+.cssp-repository-title { display: flex; min-height: 66px; align-items: center; gap: 12px; }
+.cssp-large-repo-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 1px solid var(--cssp-border); border-radius: 10px; background: var(--cssp-bg); }
+.cssp-repository-title > div { min-width: 0; flex: 1; }
+.cssp-repository-title h1 { overflow: hidden; font-size: 19px; font-weight: 600; letter-spacing: -.25px; line-height: 25px; text-overflow: ellipsis; white-space: nowrap; }
+.cssp-repository-title p { color: var(--cssp-tertiary); font-size: 11px; }
+.cssp-autosave { display: inline-flex; align-items: center; gap: 5px; color: var(--cssp-tertiary); font-size: 11px; white-space: nowrap; }
+.cssp-autosave svg { color: #188750; }
+.cssp-tabs { display: flex; height: 50px; margin-top: 13px; align-items: flex-end; gap: 25px; border-bottom: 1px solid var(--cssp-border); }
+.cssp-tabs button { position: relative; height: 41px; padding: 0; border: 0; color: var(--cssp-tertiary); background: transparent; cursor: pointer; font-size: 12px; }
+.cssp-tabs button:hover { color: var(--cssp-text); }
+.cssp-tabs button.is-active { color: var(--cssp-text); font-weight: 500; }
+.cssp-tabs button.is-active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--cssp-text); content: ''; }
+.cssp-detail-section { padding-top: 10px; }
+.cssp-detail-section > .cssp-setting-row { min-height: 78px; }
+.cssp-complex-setting { display: grid; padding: 17px 0 19px; grid-template-columns: minmax(190px, .9fr) minmax(300px, 1.1fr); gap: 26px; border-bottom: 1px solid var(--cssp-border-soft); }
+.cssp-radio-stack { display: grid; gap: 7px; }
+.cssp-radio-stack > label,
+.cssp-radio-fieldset > label { display: flex; min-height: 48px; padding: 9px 10px; align-items: flex-start; gap: 9px; border: 1px solid var(--cssp-border); border-radius: 9px; cursor: pointer; }
+.cssp-radio-stack > label:has(input:checked),
+.cssp-radio-fieldset > label:has(input:checked) { border-color: rgba(13, 13, 13, .38); background: #fafafa; }
+.cssp-radio-stack input,
+.cssp-radio-fieldset input { margin: 2px 0 0; accent-color: #111; }
+.cssp-radio-stack label span,
+.cssp-radio-fieldset label span { display: flex; min-width: 0; flex-direction: column; }
+.cssp-radio-stack b,
+.cssp-radio-fieldset b { font-size: 12px; font-weight: 500; }
+.cssp-radio-stack small,
+.cssp-radio-fieldset small { margin-top: 1px; color: var(--cssp-tertiary); font-size: 11px; line-height: 16px; }
+.cssp-text-input,
+.cssp-path-rule input { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--cssp-border); border-radius: 8px; outline: 0; background: var(--cssp-bg); font-size: 12px; }
+.cssp-text-input:focus,
+.cssp-path-rule input:focus { border-color: rgba(13, 13, 13, .35); }
+.cssp-severity-select { min-width: 88px; }
+.cssp-severity-select > i { width: 7px; height: 7px; margin-left: 10px; flex: 0 0 auto; border-radius: 50%; background: #aaa; }
+.cssp-severity-select select { padding-left: 7px; }
+.cssp-severity-select.is-critical > i { background: #e11d48; }
+.cssp-severity-select.is-high > i { background: #f97316; }
+.cssp-severity-select.is-medium > i { background: #eab308; }
+.cssp-severity-select.is-low > i { background: #22c55e; }
+.cssp-path-rules { padding: 22px 0; }
+.cssp-path-rules-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.cssp-path-rules-heading h3 { font-size: 13px; font-weight: 500; }
+.cssp-path-rules-heading p { margin-top: 2px; color: var(--cssp-tertiary); font-size: 12px; }
+.cssp-path-rule { display: grid; margin-top: 12px; padding: 12px; grid-template-columns: minmax(180px, 1fr) 106px 106px 32px; align-items: end; gap: 10px; border: 1px solid var(--cssp-border); border-radius: 10px; }
+.cssp-path-rule > label { display: grid; gap: 5px; }
+.cssp-path-rule > label > span { color: var(--cssp-secondary); font-size: 10px; }
+.cssp-path-rule .cssp-severity-select { width: 100%; }
+.cssp-empty-compact { margin-top: 13px; padding: 13px; border: 1px dashed var(--cssp-border); border-radius: 9px; color: var(--cssp-tertiary); font-size: 12px; text-align: center; }
+
+/* Connector pages */
+.cssp-connectors-page,
+.cssp-data-page { max-width: 1280px; }
+.cssp-connector-list { display: grid; max-width: 768px; }
+.cssp-connector-section { padding: 25px 0 10px; }
+.cssp-connector-section > header { display: flex; min-height: 24px; align-items: center; gap: 8px; }
+.cssp-connector-section > header h2 { font-size: 15px; font-weight: 500; }
+.cssp-brand-tile { display: none; }
+.cssp-brand-tile .cssp-gitlab-mark { font-size: 16px; }
+.cssp-beta-badge { padding: 2px 7px; border-radius: 999px; color: #6f4a92; background: #f1e9f9; font-size: 10px; font-weight: 500; }
+.cssp-connector-content { margin: 7px 0 0; }
+.cssp-connector-description { max-width: 620px; margin-bottom: 14px !important; color: var(--cssp-secondary); font-size: 12px; line-height: 18px; }
+.cssp-connector-disconnected { display: flex; align-items: flex-start; flex-direction: column; gap: 12px; }
+.cssp-connector-disconnected p { max-width: 510px; color: var(--cssp-secondary); font-size: 12px; line-height: 18px; }
+.cssp-connector-connected { display: flex; min-height: 57px; padding: 8px 0; align-items: center; justify-content: space-between; gap: 20px; }
+.cssp-connector-account { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.cssp-connector-account > div { display: flex; min-width: 0; flex-direction: column; }
+.cssp-connector-account b { overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.cssp-connector-account small { color: var(--cssp-tertiary); font-size: 10px; }
+.cssp-account-avatar,
+.cssp-slack-logo,
+.cssp-linear-logo { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border-radius: 8px; color: #fff; background: #71503a; font-size: 10px; font-weight: 600; }
+.cssp-account-avatar.is-orange { background: #e65f36; }
+.cssp-slack-logo { color: #4a154b; background: #f4ebf4; font-size: 17px; }
+.cssp-linear-logo { color: #fff; background: linear-gradient(135deg, #5e6ad2, #8b91dc); font-size: 12px; }
+.cssp-connector-buttons { display: flex; align-items: center; gap: 7px; }
+.cssp-connector-content > .cssp-setting-row { min-height: 62px; margin-top: 8px; border-top: 1px solid var(--cssp-border-soft); }
+.cssp-admin-callout { display: flex; margin-top: 11px; padding: 11px 12px; align-items: center; gap: 9px; border: 1px solid var(--cssp-border); border-radius: 10px; background: #fafafa; }
+.cssp-admin-callout > svg { flex: 0 0 auto; color: #666; }
+.cssp-admin-callout > div { min-width: 0; flex: 1; }
+.cssp-admin-callout b { font-size: 12px; font-weight: 500; }
+.cssp-admin-callout p { color: var(--cssp-tertiary); font-size: 11px; }
+.cssp-workspace-row { border-top: 1px solid var(--cssp-border-soft); }
+.cssp-linear-mark { position: relative; display: block; width: 20px; height: 20px; overflow: hidden; border-radius: 50%; background: #5e6ad2; }
+.cssp-linear-mark i { position: absolute; width: 1px; height: 12px; background: #fff; transform: rotate(-45deg); transform-origin: center; }
+.cssp-linear-mark i:nth-child(1) { top: 4px; left: 7px; }
+.cssp-linear-mark i:nth-child(2) { top: 2px; left: 11px; }
+.cssp-linear-mark i:nth-child(3) { top: 7px; left: 4px; }
+
+/* Data controls */
+.cssp-data-page > .cssp-section-block { max-width: 768px; margin-top: 25px; }
+.cssp-data-page .cssp-section-heading { min-height: 48px; }
+.cssp-data-page .cssp-section-block > .cssp-notice { margin-top: 14px; }
+.cssp-data-row-card { margin-top: 9px; }
+.cssp-data-row-card .cssp-setting-row { min-height: 76px; }
+.cssp-guardrails-section { margin-top: 40px !important; }
+.cssp-guardrail-card { margin-top: 16px; padding: 18px; border: 1px solid var(--cssp-border); border-radius: 12px; background: var(--cssp-bg); }
+.cssp-form-stack { display: grid; gap: 16px; }
+.cssp-field { display: grid; gap: 6px; }
+.cssp-field > span { font-size: 12px; font-weight: 500; }
+.cssp-field > input { width: 100%; height: 39px; padding: 0 11px; border: 1px solid var(--cssp-border); border-radius: 8px; outline: 0; background: var(--cssp-bg); font-size: 13px; }
+.cssp-field > input:focus { border-color: rgba(13, 13, 13, .38); box-shadow: 0 0 0 2px rgba(13, 13, 13, .05); }
+.cssp-field > input::placeholder { color: #a2a2a2; }
+.cssp-field > small { color: var(--cssp-tertiary); font-size: 10.5px; line-height: 15px; }
+.cssp-choice-row { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid var(--cssp-border-soft); }
+.cssp-choice-row > div:first-child { display: flex; min-width: 0; flex-direction: column; }
+.cssp-choice-row b { font-size: 12px; font-weight: 500; }
+.cssp-choice-row small { color: var(--cssp-tertiary); font-size: 10.5px; }
+.cssp-guardrail-card > .cssp-notice { margin-top: 14px; }
+.cssp-card-actions { display: flex; margin-top: 18px; padding-top: 15px; align-items: center; gap: 8px; border-top: 1px solid var(--cssp-border-soft); }
+.cssp-card-actions > span { flex: 1; }
+
+/* Access tokens */
+.cssp-access-page { max-width: 1280px; }
+.cssp-token-toolbar { display: flex; margin: 24px 0 14px; align-items: center; justify-content: space-between; gap: 12px; }
+.cssp-token-toolbar .cssp-search-field { max-width: 330px; border-radius: 999px; }
+.cssp-token-table { min-width: 790px; }
+.cssp-token-table th:first-child { width: 28%; padding-left: 14px; }
+.cssp-token-table th:nth-child(2) { width: 18%; }
+.cssp-token-table th:nth-child(3) { width: 16%; }
+.cssp-token-table th:nth-child(4) { width: 17%; }
+.cssp-token-table th:nth-child(5) { width: 13%; }
+.cssp-token-table th:last-child { width: 51px; }
+.cssp-token-table td { height: 59px; }
+.cssp-token-table td:first-child { padding-left: 14px; }
+.cssp-scope-pills { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px; }
+.cssp-scope-pills small { padding: 1px 6px; border-radius: 999px; color: var(--cssp-secondary); background: var(--cssp-muted-bg); font-size: 9.5px; white-space: nowrap; }
+.cssp-status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
+.cssp-status i { width: 7px; height: 7px; border-radius: 50%; background: #20a561; }
+.cssp-status.is-expired i { background: #d08a13; }
+.cssp-status.is-revoked i { background: #a4a4a4; }
+.cssp-menu-cell { position: relative; }
+.cssp-action-menu { position: absolute; z-index: 20; top: 45px; right: 7px; min-width: 118px; padding: 5px; border: 1px solid var(--cssp-border); border-radius: 9px; background: var(--cssp-bg); box-shadow: 0 10px 28px rgba(0, 0, 0, .14); }
+.cssp-action-menu button { display: flex; width: 100%; min-height: 32px; padding: 5px 8px; align-items: center; gap: 8px; border: 0; border-radius: 6px; color: #d20f2d; background: transparent; cursor: pointer; font-size: 12px; text-align: left; }
+.cssp-action-menu button:hover:not(:disabled) { background: rgba(210, 15, 45, .06); }
+.cssp-action-menu button:disabled { cursor: not-allowed; opacity: .4; }
+
+/* Modals */
+.cssp-modal-layer,
+.cssp-drawer-layer {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  padding: 20px;
+  place-items: center;
+  background: rgba(0, 0, 0, .48);
+  animation: cssp-fade-in .12s ease-out;
+}
+.cssp-modal {
+  width: min(100%, 480px);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  border: 1px solid rgba(0, 0, 0, .12);
+  border-radius: 15px;
+  background: var(--cssp-bg, #fff);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .24);
+  animation: cssp-modal-in .15s ease-out;
+}
+.cssp-modal.is-wide { width: min(100%, 650px); }
+.cssp-modal-header { display: flex; min-height: 74px; padding: 18px 18px 12px 22px; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.cssp-modal-header > div { min-width: 0; }
+.cssp-modal-header h2 { color: var(--cssp-text, #0d0d0d); font-size: 18px; font-weight: 600; letter-spacing: -.22px; line-height: 25px; }
+.cssp-modal-header p { margin-top: 4px; color: var(--cssp-secondary, #666); font-size: 12px; line-height: 18px; }
+.cssp-modal-body { padding: 8px 22px 21px; color: var(--cssp-text, #0d0d0d); }
+.cssp-modal-footer { display: flex; min-height: 66px; padding: 13px 20px; align-items: center; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--cssp-border, rgba(0, 0, 0, .11)); }
+.cssp-confirm-copy { color: var(--cssp-secondary, #666); font-size: 13px; line-height: 20px; }
+.cssp-radio-fieldset,
+.cssp-scope-fieldset { display: grid; margin: 0; padding: 0; gap: 8px; border: 0; }
+.cssp-radio-fieldset legend,
+.cssp-scope-fieldset legend { margin-bottom: 7px; padding: 0; font-size: 12px; font-weight: 500; }
+.cssp-modal-search { width: 100%; }
+.cssp-token-form { gap: 17px; }
+.cssp-token-form .cssp-full-select { width: 100%; height: 39px; }
+.cssp-scope-choice { position: relative; display: flex; min-height: 57px; padding: 10px; align-items: flex-start; gap: 9px; border: 1px solid var(--cssp-border); border-radius: 9px; cursor: pointer; }
+.cssp-scope-choice:has(input:checked) { border-color: rgba(13, 13, 13, .36); background: #fafafa; }
+.cssp-scope-choice > input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.cssp-checkbox-art { display: grid; width: 17px; height: 17px; margin-top: 1px; flex: 0 0 auto; place-items: center; border: 1px solid #b5b5b5; border-radius: 4px; color: transparent; background: #fff; }
+.cssp-scope-choice input:checked + .cssp-checkbox-art { border-color: #111; color: #fff; background: #111; }
+.cssp-scope-choice > span:last-child { display: flex; min-width: 0; flex-direction: column; }
+.cssp-scope-choice b { font-size: 12px; font-weight: 500; }
+.cssp-scope-choice small { margin-top: 1px; color: var(--cssp-tertiary); font-size: 10.5px; }
+.cssp-generated-token .cssp-notice { margin-top: 0; }
+.cssp-generated-token > label { display: grid; margin-top: 19px; gap: 6px; }
+.cssp-generated-token > label > span { font-size: 12px; font-weight: 500; }
+.cssp-generated-token > label > div { display: flex; min-width: 0; padding: 6px 6px 6px 11px; align-items: center; gap: 9px; border: 1px solid var(--cssp-border); border-radius: 9px; background: #fafafa; }
+.cssp-generated-token code { min-width: 0; flex: 1; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.cssp-generated-token > p { margin-top: 8px; color: var(--cssp-tertiary); font-size: 10.5px; }
+
+/* Access token details drawer */
+.cssp-drawer-layer { padding: 0; place-items: stretch end; }
+.cssp-token-drawer { width: min(100%, 500px); height: 100%; padding: 0 38px 30px; overflow: auto; color: var(--cssp-text); background: var(--cssp-bg); box-shadow: -12px 0 45px rgba(0, 0, 0, .16); animation: cssp-drawer-in .18s ease-out; }
+.cssp-token-drawer > header { display: flex; height: 66px; margin: 0 -25px; align-items: center; justify-content: space-between; }
+.cssp-token-drawer-identity { display: flex; padding: 18px 0 26px; flex-direction: column; align-items: center; gap: 12px; border-bottom: 1px solid var(--cssp-border); text-align: center; }
+.cssp-token-drawer-identity > span { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 50%; color: var(--cssp-secondary); background: var(--cssp-muted-bg); }
+.cssp-token-drawer-identity h2 { max-width: 100%; overflow-wrap: anywhere; font-size: 18px; font-weight: 600; }
+.cssp-token-drawer dl { display: grid; margin: 22px 0 27px; gap: 14px; }
+.cssp-token-drawer dl > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; font-size: 12px; }
+.cssp-token-drawer dt { color: var(--cssp-tertiary); }
+.cssp-token-drawer dd { min-width: 0; margin: 0; color: var(--cssp-text); text-align: right; overflow-wrap: anywhere; }
+.cssp-token-drawer code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; }
+.cssp-token-drawer .cssp-scope-pills { justify-content: flex-end; }
+.cssp-toast { position: fixed; z-index: 1200; right: 24px; bottom: 24px; display: flex; min-height: 42px; padding: 10px 15px; align-items: center; gap: 8px; border: 1px solid rgba(255, 255, 255, .14); border-radius: 10px; color: #fff; background: #242424; box-shadow: 0 10px 30px rgba(0, 0, 0, .2); font-size: 12px; animation: cssp-modal-in .15s ease-out; }
+
+@keyframes cssp-fade-in { from { opacity: 0; } }
+@keyframes cssp-modal-in { from { opacity: 0; transform: translateY(5px) scale(.985); } }
+@keyframes cssp-drawer-in { from { transform: translateX(28px); } }
+
+@media (max-width: 760px) {
+  .cssp-page { max-width: none; padding: 32px 16px 48px; margin: 0; }
+  .cssp-page-header { min-height: 65px; padding-top: 1px; }
+  .cssp-page-header h1 { font-size: 19px; }
+  .cssp-section-block { margin-top: 24px; }
+  .cssp-notice { margin-top: 15px; }
+  .cssp-setting-row { min-height: 74px; gap: 12px; }
+  .cssp-setting-description { max-width: 440px; }
+  .cssp-native-select { min-width: 112px; }
+  .cssp-repo-toolbar { align-items: stretch; }
+  .cssp-repo-toolbar .cssp-segmented { order: 0; }
+  .cssp-repo-toolbar .cssp-search-field { width: 100%; max-width: none; flex-basis: 100%; order: 1; }
+  .cssp-inline-checkbox { margin-left: 0; order: 2; }
+  .cssp-repo-table-wrap,
+  .cssp-token-table-wrap { display: none; }
+  .cssp-repo-mobile-list,
+  .cssp-token-mobile-list { display: grid; gap: 8px; }
+  .cssp-repo-mobile-card,
+  .cssp-token-mobile-card { display: flex; width: 100%; min-height: 64px; padding: 9px 11px; align-items: center; gap: 10px; border: 1px solid var(--cssp-border); border-radius: 10px; background: var(--cssp-bg); cursor: pointer; text-align: left; }
+  .cssp-repo-mobile-card > span:nth-child(2),
+  .cssp-token-mobile-card > span:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+  .cssp-repo-mobile-card b,
+  .cssp-token-mobile-card b { overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+  .cssp-repo-mobile-card small,
+  .cssp-token-mobile-card small { color: var(--cssp-tertiary); font-size: 10px; }
+  .cssp-mobile-empty { display: grid; min-height: 86px; place-items: center; border: 1px dashed var(--cssp-border); border-radius: 10px; color: var(--cssp-tertiary); font-size: 12px; }
+  .cssp-repository-title { flex-wrap: wrap; }
+  .cssp-autosave { width: 100%; padding-left: 54px; }
+  .cssp-complex-setting { grid-template-columns: 1fr; gap: 14px; }
+  .cssp-path-rules-heading { align-items: flex-start; flex-direction: column; }
+  .cssp-path-rule { grid-template-columns: 1fr 1fr; }
+  .cssp-path-rule > label:first-child { grid-column: 1 / -1; }
+  .cssp-path-rule > .cssp-icon-button { position: absolute; }
+  .cssp-connector-content { margin-left: 0; }
+  .cssp-connector-disconnected,
+  .cssp-connector-connected { align-items: flex-start; flex-direction: column; }
+  .cssp-connector-disconnected .cssp-button { align-self: flex-start; }
+  .cssp-connector-buttons { width: 100%; flex-wrap: wrap; }
+  .cssp-admin-callout { align-items: flex-start; flex-wrap: wrap; }
+  .cssp-choice-row { align-items: flex-start; flex-direction: column; padding: 12px 0; gap: 9px; }
+  .cssp-card-actions { flex-wrap: wrap; }
+  .cssp-card-actions > span { display: none; }
+  .cssp-token-toolbar .cssp-search-field { flex: 1; }
+}
+
+@media (max-width: 500px) {
+  .cssp-page-header p { max-width: 320px; }
+  .cssp-section-heading { align-items: flex-start; }
+  .cssp-setting-row { align-items: flex-start; }
+  .cssp-setting-action { padding-top: 2px; }
+  .cssp-code-review-page .cssp-settings-card .cssp-setting-row:nth-child(2) { flex-direction: column; }
+  .cssp-code-review-page .cssp-settings-card .cssp-setting-row:nth-child(2) .cssp-setting-action,
+  .cssp-detail-section > .cssp-setting-row:has(.cssp-native-select) .cssp-setting-action { width: 100%; }
+  .cssp-code-review-page .cssp-settings-card .cssp-native-select,
+  .cssp-detail-section > .cssp-setting-row .cssp-native-select { width: 100%; }
+  .cssp-tabs { gap: 19px; overflow-x: auto; }
+  .cssp-tabs button { white-space: nowrap; }
+  .cssp-path-rule { grid-template-columns: 1fr; }
+  .cssp-path-rule > label:first-child { grid-column: auto; }
+  .cssp-token-toolbar { align-items: stretch; }
+  .cssp-token-toolbar .cssp-button { padding: 6px 11px; }
+  .cssp-modal-layer { padding: 10px; align-items: end; }
+  .cssp-modal { width: 100%; max-height: calc(100dvh - 10px); border-radius: 15px 15px 10px 10px; }
+  .cssp-modal-header { padding-left: 18px; }
+  .cssp-modal-body { padding-right: 18px; padding-left: 18px; }
+  .cssp-generated-token > label > div { align-items: stretch; flex-direction: column; }
+  .cssp-generated-token code { display: block; padding: 5px 0; overflow-wrap: anywhere; white-space: normal; }
+  .cssp-token-drawer { padding: 0 22px 25px; }
+  .cssp-token-drawer > header { margin: 0 -10px; }
+  .cssp-toast { right: 12px; bottom: 12px; left: 12px; justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cssp-modal-layer,
+  .cssp-modal,
+  .cssp-token-drawer,
+  .cssp-toast { animation: none; }
+  .cssp-switch > span { transition: none; }
+}

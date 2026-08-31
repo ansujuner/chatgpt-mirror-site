@@ -1,0 +1,42 @@
+{
+  "user_id": "fixture-user-must-not-leak",
+  "account_id": "fixture-account-must-not-leak",
+  "plan_type": "pro",
+  "rate_limit": {
+    "allowed": false,
+    "limit_reached": true,
+    "primary_window": {
+      "used_percent": 82.5,
+      "limit_window_seconds": 18000,
+      "reset_after_seconds": 912,
+      "reset_at": 2000000000
+    },
+    "secondary_window": {
+      "used_percent": 41,
+      "limit_window_seconds": 604800,
+      "reset_after_seconds": 400000,
+      "reset_at": 2000400000
+    }
+  },
+  "credits": {
+    "balance": "27.5",
+    "currency": "credits",
+    "has_credits": true,
+    "unlimited": false,
+    "overage_limit_reached": false
+  },
+  "spend_control": {
+    "allowed": true,
+    "reached": false,
+    "individual_limit": {
+      "limit": 100,
+      "used": 25,
+      "remaining": 75,
+      "reset_at": 2000500000,
+      "unit": "credits"
+    }
+  },
+  "rate_limit_reached_type": {
+    "type": "codex_five_hour"
+  }
+}

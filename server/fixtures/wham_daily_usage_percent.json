@@ -1,0 +1,27 @@
+{
+  "units": "percent",
+  "group_by": "day",
+  "data": [
+    {
+      "date": "2026-08-30",
+      "product_surface_usage_values": {
+        "codex_cloud": 6.5,
+        "chatgpt_work": 3.5
+      },
+      "models": [
+        {"model": "gpt-5.6-codex", "credits": 10}
+      ],
+      "workspace_user_email": "daily-private-email-must-not-leak@example.test"
+    },
+    {
+      "date": "2026-08-29",
+      "product_surface_usage_values": {
+        "codex_cloud": 5
+      },
+      "models": [
+        {"model": "gpt-5.6-codex", "credits": 5}
+      ]
+    }
+  ],
+  "workspace_user_email": "top-level-private-email-must-not-leak@example.test"
+}

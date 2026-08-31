@@ -1,0 +1,165 @@
+.openai-site { min-height: 100vh; color: #050505; background: #fff; font-family: Arial, Helvetica, sans-serif; }
+.openai-site *, .openai-site *::before, .openai-site *::after { box-sizing: border-box; }
+.openai-site a { color: inherit; text-decoration: none; }
+.openai-site-header { position: sticky; z-index: 30; top: 0; display: flex; height: 64px; padding: 12px 32px 0; align-items: flex-start; gap: 34px; background: #fff; }
+.openai-site-logo { margin-top: 4px; font-size: 20px; font-weight: 700; letter-spacing: -.7px; line-height: 28px; }
+.openai-desktop-nav { display: flex; align-items: center; gap: 33px; }
+.openai-desktop-nav a,
+.openai-desktop-nav button { padding: 10px 0; border: 0; color: #050505; background: transparent; cursor: pointer; font-size: 14px; font-weight: 600; }
+.openai-desktop-nav a:hover,
+.openai-desktop-nav button:hover { text-decoration: underline; text-underline-offset: 4px; }
+.openai-header-actions { display: flex; margin-left: auto; align-items: center; gap: 10px; }
+.openai-search-trigger { display: grid; width: 40px; height: 40px; padding: 0; margin-right: auto; place-items: center; border: 0; border-radius: 50%; background: transparent; cursor: pointer; transition: background-color 120ms ease, transform 80ms ease; }
+.openai-search-trigger:hover { background: #f2f2f2; }
+.openai-search-trigger svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.35; }
+.openai-login-link,
+.openai-chatgpt-link { display: inline-flex; height: 38px; padding: 0 20px; align-items: center; border-radius: 999px; background: #f6f6f6; font-size: 14px; font-weight: 600; transition: background-color 120ms ease, transform 80ms ease; }
+.openai-login-link { border: 0; cursor: pointer; }
+.openai-chatgpt-link { color: #fff!important; background: #050505; }
+.openai-menu-trigger { display: none; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; background: transparent; cursor: pointer; transition: background-color 120ms ease, transform 80ms ease; }
+.openai-menu-trigger svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.openai-product-menu,
+.openai-login-menu { position: fixed; z-index: 41; top: 54px; display: grid; padding: 6px; border: 1px solid rgba(0,0,0,.08); border-radius: 10px; background: rgba(255,255,255,.94); box-shadow: 0 14px 36px rgba(0,0,0,.12); backdrop-filter: blur(20px); animation: openai-menu-in 150ms ease-out; }
+@keyframes openai-menu-in { from { opacity: 0; clip-path: inset(0 0 100% 0 round 10px); } }
+.openai-product-menu { left: 164px; width: 210px; }
+.openai-login-menu { right: 185px; width: 122px; }
+.openai-product-menu a,
+.openai-login-menu a { display: flex; height: 40px; padding: 0 12px; align-items: center; border-radius: 7px; font-size: 14px; transition: background-color 100ms ease, transform 80ms ease; }
+.openai-product-menu a:hover,
+.openai-login-menu a:hover { background: rgba(0,0,0,.07); }
+.openai-search-panel { position: fixed; z-index: 29; inset: 64px 0 0; display: block; padding: 48px 32px 40px; overflow-y: auto; background: rgba(255,255,255,.98); animation: openai-panel-in 180ms ease-out; }
+@keyframes openai-panel-in { from { opacity: 0; transform: translateY(-12px); } }
+.openai-search-box { display: flex; align-items: center; gap: 12px; }
+.openai-search-panel input { height: 64px; min-width: 0; flex: 1; border: 0; border-bottom: 1px solid #111; outline: none; font-size: 38px; }
+.openai-search-box button { height: 40px; padding: 0 16px; border: 0; border-radius: 999px; background: #f1f1f1; cursor: pointer; transition: background-color 120ms ease, transform 80ms ease, opacity 120ms ease; }
+.openai-search-box button:disabled { opacity: .45; cursor: default; }
+.openai-search-prompts { display: grid; width: min(680px,100%); margin-top: 58px; }
+.openai-search-prompts > p { color: #676767; font-size: 14px; }
+.openai-search-prompts button { display: flex; min-height: 54px; padding: 0; align-items: center; justify-content: space-between; border: 0; border-bottom: 1px solid #dedede; background: transparent; cursor: pointer; text-align: left; font-size: 17px; transition: padding 120ms ease, transform 80ms ease; }
+.openai-search-prompts button:hover { padding-left: 8px; }
+.openai-mobile-menu { position: fixed; z-index: 29; inset: 64px 0 0; padding: 22px 24px; background: #fff; animation: openai-panel-in 160ms ease-out; }
+.openai-mobile-menu nav { display: grid; }
+.openai-mobile-menu nav a { display: flex; height: 58px; align-items: center; justify-content: space-between; border-bottom: 1px solid #dedede; font-size: 23px; }
+.openai-mobile-login,
+.openai-mobile-chatgpt { display: flex; height: 48px; margin-top: 18px; align-items: center; justify-content: center; border-radius: 999px; background: #f2f2f2; font-weight: 600; transition: transform 80ms ease; }
+.openai-mobile-chatgpt { color: #fff!important; background: #050505; }
+
+.legal-document { width: min(668px, calc(100% - 48px)); margin: 0 auto; }
+.legal-language-select { display: block; width: 100%; margin-top: 88px; }
+.legal-language-select select { width: 100%; height: 40px; padding: 0 12px; border: 1px solid #dedede; border-radius: 4px; outline: none; color: #050505; background: #fff; font-size: 14px; }
+.legal-document-title { margin-top: 64px; text-align: center; }
+.legal-document-title p { margin: 0 0 28px; font-size: 14px; font-weight: 600; line-height: 23px; }
+.legal-document-title h1 { margin: 0; font-size: 64px; font-weight: 500; letter-spacing: -2px; line-height: 64px; }
+.legal-document-body { margin-top: 54px; padding-bottom: 230px; font-size: 17px; line-height: 28px; }
+.legal-document-body > p { margin: 0 0 23px; }
+.legal-document-body a { text-decoration: underline; text-underline-offset: 2px; }
+.legal-regional-note { display: flex; padding: 18px 20px; flex-direction: column; border: 1px solid #dedede; border-radius: 10px; background: #f7f7f5; gap: 5px; }
+.legal-regional-note strong { font-size: 16px; font-weight: 600; }
+.legal-regional-note span { color: #5f5f5f; font-size: 14px; line-height: 22px; }
+.legal-document-body section { padding-top: 31px; }
+.legal-document-body h2 { margin: 0 0 16px; font-size: 30px; font-weight: 500; letter-spacing: -.4px; line-height: 38px; }
+.legal-document-body section p { margin: 0 0 20px; }
+
+.legal-cookie-banner { position: fixed; z-index: 70; right: 15px; bottom: 0; left: 0; display: flex; min-height: 130px; padding: 26px 24px 22px; align-items: center; justify-content: space-between; gap: 24px; background: rgba(244,244,244,.97); }
+.legal-cookie-banner > div { max-width: 840px; }
+.legal-cookie-banner strong { display: block; margin-bottom: 9px; font-size: 16px; font-weight: 500; }
+.legal-cookie-banner p { margin: 0; color: #656565; font-size: 14px; line-height: 22px; }
+.legal-cookie-banner p button { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; text-decoration: underline; }
+.legal-cookie-banner p a { text-decoration: underline; }
+.legal-cookie-banner nav { display: flex; flex: none; gap: 9px; }
+.legal-cookie-banner nav button { height: 40px; padding: 0 22px; border: 0; border-radius: 999px; background: #e9e9e9; cursor: pointer; font-size: 14px; font-weight: 600; transition: background-color 120ms ease, transform 80ms ease; }
+.legal-cookie-banner nav button:hover { background: #ddd; }
+.legal-cookie-modal-layer { position: fixed; z-index: 90; inset: 0; display: grid; padding: 16px; place-items: center; background: rgba(0,0,0,.3); backdrop-filter: blur(1px); }
+.legal-cookie-modal { width: min(520px, 100%); padding: 22px; border-radius: 16px; background: #fff; box-shadow: 0 18px 50px rgba(0,0,0,.2); animation: legal-modal-in 150ms ease-out; }
+@keyframes legal-modal-in { from { opacity: 0; transform: translateY(8px) scale(.985); } }
+.legal-cookie-modal header { display: flex; align-items: center; justify-content: space-between; }
+.legal-cookie-modal h2 { margin: 0; font-size: 22px; }
+.legal-cookie-modal header button { width: 34px; height: 34px; border: 0; border-radius: 50%; background: #f1f1f1; cursor: pointer; font-size: 22px; transition: background-color 120ms ease, transform 80ms ease; }
+.legal-cookie-modal > p { color: #666; }
+.legal-cookie-modal label { display: flex; min-height: 64px; padding: 12px 0; align-items: center; justify-content: space-between; border-top: 1px solid #e5e5e5; gap: 20px; }
+.legal-cookie-modal label span { display: flex; flex-direction: column; }
+.legal-cookie-modal label small { color: #707070; }
+.legal-cookie-modal label input { width: 20px; height: 20px; }
+.legal-cookie-modal footer { display: flex; margin-top: 18px; justify-content: flex-end; gap: 8px; }
+.legal-cookie-modal footer button { height: 42px; padding: 0 18px; border: 0; border-radius: 999px; background: #ebebeb; cursor: pointer; font-weight: 600; transition: background-color 120ms ease, transform 80ms ease; }
+.legal-cookie-modal footer button:last-child { color: #fff; background: #050505; }
+
+.openai-site-footer { position: relative; display: flex; min-height: 652px; padding: 54px 32px 110px; align-items: flex-start; justify-content: space-between; color: #fff; background: #050505; }
+.openai-site-footer > a { font-size: 24px; font-weight: 700; }
+.openai-site-footer nav { display: flex; gap: 24px; }
+.openai-footer-columns { display: grid; grid-template-columns: repeat(2, 190px); gap: 34px; }
+.openai-footer-columns nav { display: flex; align-items: flex-start; flex-direction: column; gap: 14px; }
+.openai-footer-columns nav strong { color: #9d9d9d; font-size: 13px; text-transform: uppercase; }
+.openai-footer-columns a:hover { text-decoration: underline; }
+.openai-footer-meta { position: absolute; right: 32px; bottom: 32px; left: 32px; display: flex; padding-top: 20px; align-items: center; justify-content: space-between; border-top: 1px solid #3b3b3b; gap: 24px; }
+.openai-footer-meta > button { border: 0; color: #fff; background: transparent; cursor: pointer; text-decoration: underline; }
+.openai-footer-meta > div { display: flex; gap: 16px; }
+
+.openai-marketing-page { min-height: calc(100vh - 64px); padding: 80px 32px 120px; background: #f3f3ee; }
+.openai-marketing-page > p { margin: 0 0 26px; font-size: 18px; }
+.openai-marketing-page h1 { max-width: 1100px; margin: 0; font-size: clamp(54px, 7.7vw, 112px); font-weight: 500; letter-spacing: -.055em; line-height: .96; }
+.openai-marketing-page > div { display: flex; max-width: 680px; margin: 70px 0 0 auto; flex-direction: column; gap: 26px; font-size: 24px; line-height: 1.35; }
+.openai-marketing-page > div p { margin: 0; }
+.openai-marketing-page > div a { width: fit-content; padding-bottom: 2px; border-bottom: 1px solid; }
+.openai-search-results { display: grid; max-width: 680px; margin: 70px 0 0 auto; border-top: 1px solid #aaa; }
+.openai-search-results a { display: flex; padding: 22px 0; flex-direction: column; border-bottom: 1px solid #aaa; gap: 5px; }
+.openai-search-results span { color: #555; }
+
+.openai-site :is(button, a):active {
+  transform: scale(.97);
+}
+.openai-site :is(button, a, input, select):focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .openai-site :is(button, a) { transition: none; }
+}
+
+@media (max-width: 767px) {
+  .openai-site-header { height: 54px; padding: 7px 12px 0 24px; align-items: flex-start; }
+  .openai-site-logo { margin-top: 7px; font-size: 19px; }
+  .openai-desktop-nav,
+  .openai-login-link,
+  .openai-chatgpt-link { display: none; }
+  .openai-header-actions { gap: 3px; }
+  .openai-menu-trigger { display: grid; width: 40px; height: 40px; }
+  .openai-search-trigger { margin: 0; }
+  .openai-search-panel { inset: 54px 0 0; padding: 32px 20px; }
+  .openai-search-panel input { height: 54px; font-size: 28px; }
+  .openai-search-box button { padding: 0 11px; }
+  .openai-product-menu,
+  .openai-login-menu { display: none; }
+  .openai-mobile-menu { inset: 54px 0 0; }
+  .openai-mobile-menu nav a { height: 62px; font-size: 32px; line-height: 36.8px; }
+  .openai-search-panel input { height: 44px; font-size: 20px; }
+  .openai-search-panel button { height: 36px; padding: 0 10px; }
+  .legal-document { width: calc(100% - 48px); }
+  .legal-language-select { margin-top: 40px; }
+  .legal-document-title { margin-top: 48px; }
+  .legal-document-title p { margin-bottom: 28px; font-size: 14px; }
+  .legal-document-title h1 { font-size: 32.46px; letter-spacing: -.8px; line-height: 36.88px; }
+  .legal-document-body { margin-top: 39px; padding-bottom: 350px; font-size: 17px; line-height: 28px; }
+  .legal-document-body > p { margin-bottom: 24px; }
+  .legal-document-body h2 { font-size: 27px; line-height: 34px; }
+  .legal-cookie-banner { right: 15px; min-height: 301px; padding: 22px 20px 20px; align-items: stretch; flex-direction: column; gap: 15px; }
+  .legal-cookie-banner strong { margin-bottom: 9px; }
+  .legal-cookie-banner p { line-height: 23px; }
+  .legal-cookie-banner nav { flex-direction: column; gap: 8px; }
+  .legal-cookie-banner nav button { width: 100%; height: 40px; }
+  .legal-cookie-modal footer { flex-direction: column; }
+  .legal-cookie-modal footer button { width: 100%; }
+  .openai-site-footer { min-height: 1040px; padding: 42px 24px 150px; flex-direction: column; justify-content: flex-start; gap: 52px; }
+  .openai-footer-columns { width: 100%; grid-template-columns: 1fr; gap: 44px; }
+  .openai-footer-columns nav { gap: 20px; }
+  .openai-footer-meta { right: 24px; bottom: 28px; left: 24px; align-items: flex-start; flex-direction: column; }
+  .openai-marketing-page { min-height: calc(100vh - 54px); padding: 52px 24px 90px; }
+  .openai-marketing-page h1 { font-size: 54px; }
+  .openai-marketing-page > div { margin-top: 54px; font-size: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .openai-search-panel,
+  .openai-mobile-menu,
+  .legal-cookie-modal { animation: none; }
+}

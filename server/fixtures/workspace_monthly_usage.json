@@ -1,0 +1,14 @@
+{
+  "balance_unit": "credits",
+  "current_month_usage": 60,
+  "effective_monthly_limit": {
+    "enforcement_mode": "HARD_CAP",
+    "limit_mode": "custom",
+    "limit_amount": {
+      "amount": 200,
+      "unit": "credits"
+    }
+  },
+  "workspace_id": "fixture-workspace-id-must-not-leak",
+  "member_email": "fixture-workspace-email-must-not-leak@example.test"
+}
