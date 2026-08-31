@@ -558,7 +558,7 @@ export function formatCodexPricingDisclosure(pricing: CodexUsagePricing) {
     ? '当前标准速率'
     : `${formatCodexCredits(pricing.creditsPerUsd)} credits ≈ US$1`
   const asOf = pricing.asOf ? `；价格基准 ${pricing.asOf}` : ''
-  return `按 ${ratio} 名义换算${asOf}。Fast/优先处理、长上下文及工具费用可能不同；这是估算，不是实际 API 账单。`
+  return `按 ${ratio} 名义换算${asOf}。已用 credits 已包含 Fast/优先处理影响，不会重复乘算；长上下文及工具费用仍可能与 API 不同。这是估算，不是实际 API 账单。`
 }
 
 export function formatUsageBucketDate(value: string) {

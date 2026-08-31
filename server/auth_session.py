@@ -1176,11 +1176,15 @@ def _api_equivalent_pricing(units: str | None) -> dict[str, Any]:
             "this is not an actual API bill."
         ),
         "limitations": [
-            "Fast or priority processing can apply 2x or 2.5x multipliers.",
             (
-                "WHAM does not expose input, cached-input, output, or "
-                "reasoning-token quantities in this response."
+                "Fast or priority multipliers are already reflected in "
+                "totals.credits and are not applied again."
             ),
+            (
+                "Aggregate input, cached-input, and output token counts may be "
+                "present, but are not always split by model and speed."
+            ),
+            "The estimate remains credits / creditsPerUsd and is not an invoice.",
             "Long-context and tool fees can differ from this nominal estimate.",
         ],
     }
@@ -1583,6 +1587,12 @@ def _safe_usage_date(value: Any) -> str:
     return date_part
 
 
+def _strict_usage_date(value: Any) -> str:
+    if not isinstance(value, str) or len(value) != 10 or value != value.strip():
+        return ""
+    return _safe_usage_date(value)
+
+
 def _strict_nonnegative_number(value: Any) -> float | None:
     """Accept only a real JSON number from the captured analytics schema."""
 
@@ -1956,6 +1966,26 @@ def _safe_workspace_usage_clients(value: Any) -> list[dict[str, Any]]:
     return safe
 
 
+def _invalidate_over_total_breakdown(
+    items: list[dict[str, Any]], total_credits: float | None
+) -> None:
+    """Fail closed when a detail series cannot reconcile to its total."""
+
+    if total_credits is None:
+        return
+    known = sum(
+        item["credits"]
+        for item in items
+        if isinstance(item.get("credits"), (int, float))
+    )
+    epsilon = max(1e-6, abs(total_credits) * 1e-6)
+    if known <= total_credits + epsilon:
+        return
+    for item in items:
+        item["credits"] = None
+        item["apiEquivalentUsd"] = None
+
+
 def _sanitize_daily_workspace_usage_counts(
     payload: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -1969,6 +1999,9 @@ def _sanitize_daily_workspace_usage_counts(
 
     if not isinstance(payload, Mapping):
         return _empty_daily_usage(None)
+    group_by = _string_at(payload, "group_by")[:20] or None
+    if group_by not in {None, "day"}:
+        return _empty_daily_usage(None)
     raw_buckets = payload.get("data")
     if not isinstance(raw_buckets, list):
         return _empty_daily_usage(None)
@@ -1978,13 +2011,16 @@ def _sanitize_daily_workspace_usage_counts(
     for raw in raw_buckets[:366]:
         if not isinstance(raw, Mapping):
             continue
-        date = _safe_usage_date(raw.get("date"))
+        date = _strict_usage_date(raw.get("date"))
         totals = raw.get("totals")
         if not date or date in seen_dates or not isinstance(totals, Mapping):
             continue
         seen_dates.add(date)
         credits = _strict_nonnegative_number(totals.get("credits"))
         clients = _safe_workspace_usage_clients(raw.get("clients"))
+        models = _safe_workspace_usage_models(raw.get("models"))
+        _invalidate_over_total_breakdown(clients, credits)
+        _invalidate_over_total_breakdown(models, credits)
         client_credits: dict[str, float] = {}
         for client in clients:
             client_id = client["clientId"]
@@ -2004,7 +2040,7 @@ def _sanitize_daily_workspace_usage_counts(
                 "credits": credits,
                 "apiEquivalentUsd": _api_equivalent_usd(credits, units="credits"),
                 "totals": safe_totals,
-                "models": _safe_workspace_usage_models(raw.get("models")),
+                "models": models,
                 "clients": clients,
                 # The current UI already understands its surface shape. WHAM's
                 # analytics endpoint calls the same dimension ``clients``.
@@ -2044,7 +2080,7 @@ def _sanitize_daily_workspace_usage_counts(
     return {
         "availability": "available" if available else "unavailable",
         "units": "credits" if available else None,
-        "groupBy": _string_at(payload, "group_by")[:20] or None,
+        "groupBy": group_by,
         "summary": {
             "rangeCredits": range_credits,
             "apiEquivalentUsd": _api_equivalent_usd(

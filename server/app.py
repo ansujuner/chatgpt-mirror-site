@@ -74,6 +74,7 @@ from .model_preferences import (
 from .protocol import (
     ChatResult,
     GuestProtocolBridge,
+    GuestTurnStream,
     ProtocolError,
     ProtocolSession,
 )
@@ -502,8 +503,9 @@ class ConversationRegistry:
         *,
         owner: str,
         previous_id: str | None = None,
+        public_id: str | None = None,
     ) -> None:
-        conversation_id = session.conversation_id
+        conversation_id = public_id or session.conversation_id
         if not conversation_id:
             return
         with self._lock:
@@ -515,6 +517,24 @@ class ConversationRegistry:
                 last_access_monotonic=time.monotonic(),
             )
             self._prune_locked()
+
+    def remove(
+        self,
+        conversation_id: str,
+        *,
+        owner: str,
+        expected_session: ProtocolSession | None = None,
+    ) -> None:
+        entry: RegistryEntry | None = None
+        with self._lock:
+            key = (owner, conversation_id)
+            candidate = self._entries.get(key)
+            if candidate is not None and (
+                expected_session is None or candidate.session is expected_session
+            ):
+                entry = self._entries.pop(key)
+        if entry is not None:
+            entry.session.close()
 
     def remove_owner(self, owner: str) -> None:
         with self._lock:
@@ -715,6 +735,26 @@ def _openai_error(
             }
         },
     )
+
+
+def _protocol_error_status(error: ProtocolError) -> int:
+    if error.code == "conversation_not_found":
+        return 404
+    if error.upstream_status == 401:
+        return 401
+    if error.upstream_status == 403:
+        return 403
+    if error.upstream_status == 429:
+        return 429
+    if error.code.endswith("_network_error"):
+        return 503
+    if error.stage in {"dependency", "local_session"}:
+        return 503
+    if error.stage == "validation":
+        return 400
+    # An HTTP-200 DPU without a terminal complete control is an upstream
+    # protocol failure, never an empty successful completion.
+    return 502
 
 
 @app.middleware("http")
@@ -2095,6 +2135,107 @@ def _execute_chat(
         raise
 
 
+@dataclass
+class GuestChatStreamContext:
+    session: ProtocolSession
+    stream: GuestTurnStream
+    owner: str
+    public_conversation_id: str
+    previous_id: str | None
+    new_session: bool
+    lock_held: bool = True
+    committed: bool = False
+
+
+def _open_guest_chat_stream(
+    prompt: str,
+    conversation_id: str | None,
+    owner: str,
+) -> GuestChatStreamContext:
+    new_session = conversation_id is None
+    if conversation_id:
+        session = REGISTRY.get(conversation_id, owner=owner)
+        if session is None:
+            raise ProtocolError(
+                "conversation_not_found",
+                "The supplied conversation id header is unknown or expired.",
+                stage="local_session",
+                retryable=False,
+            )
+        public_conversation_id = conversation_id
+    else:
+        session = BRIDGE.create_session()
+        # The browser receives only this opaque, process-local handle. The
+        # upstream id is learned later from DPU state and never has to delay
+        # response headers or cross the bridge boundary.
+        public_conversation_id = "guestconv-" + secrets.token_urlsafe(24)
+
+    locked_session = session
+    locked_session.lock.acquire()
+    try:
+        active_session, stream = BRIDGE.run_turn_stream(
+            session,
+            prompt,
+            allow_first_turn_rebootstrap=new_session,
+        )
+        if active_session is not locked_session:
+            locked_session.lock.release()
+            locked_session = active_session
+            locked_session.lock.acquire()
+        return GuestChatStreamContext(
+            session=active_session,
+            stream=stream,
+            owner=owner,
+            public_conversation_id=public_conversation_id,
+            previous_id=conversation_id,
+            new_session=new_session,
+        )
+    except Exception:
+        locked_session.lock.release()
+        if new_session:
+            session.close()
+        raise
+
+
+def _commit_guest_chat_stream(context: GuestChatStreamContext) -> ChatResult:
+    result = context.stream.result
+    if result is None:
+        raise ProtocolError(
+            "dpu_missing_complete",
+            "The DPU stream did not contain a terminal complete control.",
+            stage="conversation_dpu",
+            retryable=True,
+        )
+    if not context.committed:
+        REGISTRY.put(
+            context.session,
+            owner=context.owner,
+            previous_id=context.previous_id,
+            public_id=context.public_conversation_id,
+        )
+        context.committed = True
+    return result
+
+
+def _release_guest_chat_stream(context: GuestChatStreamContext) -> None:
+    if context.lock_held:
+        context.session.lock.release()
+        context.lock_held = False
+
+
+def _abort_guest_chat_stream(context: GuestChatStreamContext) -> None:
+    context.stream.close()
+    if context.previous_id:
+        REGISTRY.remove(
+            context.previous_id,
+            owner=context.owner,
+            expected_session=context.session,
+        )
+    else:
+        context.session.close()
+    _release_guest_chat_stream(context)
+
+
 def _refresh_authenticated_credential(
     account_entry: LocalAuthEntry,
     protocol_session: AuthenticatedProtocolSession,
@@ -2646,6 +2787,113 @@ async def _completion_sse(
     yield b"data: [DONE]\n\n"
 
 
+def _stream_error_line(error: ProtocolError) -> bytes:
+    detail = error.public_detail()
+    detail.pop("upstream_request_id", None)
+    return _sse_line(
+        {
+            "error": {
+                "message": error.message,
+                "type": "upstream_error",
+                "param": None,
+                "code": error.code,
+                "detail": detail,
+            }
+        }
+    )
+
+
+async def _guest_completion_sse(
+    context: GuestChatStreamContext,
+    *,
+    completion_id: str,
+    model: str,
+    created: int,
+) -> AsyncIterator[bytes]:
+    completed = False
+    try:
+        yield _sse_line(
+            {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant"},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+        while True:
+            delta = await asyncio.to_thread(context.stream.next_delta)
+            if delta is None:
+                break
+            yield _sse_line(
+                {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": delta},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+
+        _commit_guest_chat_stream(context)
+        completed = True
+        yield _sse_line(
+            {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+        yield b"data: [DONE]\n\n"
+    except ProtocolError as error:
+        # HTTP status cannot change after streaming headers are sent. Emit an
+        # explicit OpenAI-shaped error event and deliberately omit stop/DONE;
+        # callers must never mistake a truncated upstream turn for success.
+        yield _stream_error_line(error)
+    except Exception:
+        LOGGER.exception("Unhandled guest stream failure")
+        yield _stream_error_line(
+            ProtocolError(
+                "bridge_stream_internal_error",
+                "The local bridge stream encountered an unexpected error.",
+                stage="local",
+                retryable=False,
+            )
+        )
+    finally:
+        try:
+            if completed or context.stream.result is not None:
+                _commit_guest_chat_stream(context)
+                _release_guest_chat_stream(context)
+            else:
+                _abort_guest_chat_stream(context)
+        except Exception:
+            LOGGER.exception("Guest stream cleanup failed")
+            _release_guest_chat_stream(context)
+        finally:
+            UPSTREAM_SEMAPHORE.release()
+
+
 @app.post("/api/chat/completions", response_model=None)
 async def chat_completions(
     http_request: Request,
@@ -2702,6 +2950,69 @@ async def chat_completions(
         if local_handle and local_account is not None
         else "guest"
     )
+
+    if local_account is None and request.stream:
+        await UPSTREAM_SEMAPHORE.acquire()
+        setup_task = asyncio.create_task(
+            asyncio.to_thread(
+                _open_guest_chat_stream,
+                prompt,
+                conversation_id,
+                owner,
+            )
+        )
+        try:
+            stream_context = await asyncio.shield(setup_task)
+        except ProtocolError as error:
+            UPSTREAM_SEMAPHORE.release()
+            return _openai_error(_protocol_error_status(error), error)
+        except asyncio.CancelledError:
+            # Cancelling an asyncio Future cannot stop curl work already
+            # running in its worker thread. Wait for setup to hand ownership
+            # back, then close it, so no session lock/connection is orphaned.
+            try:
+                abandoned_context = await setup_task
+            except Exception:
+                pass
+            else:
+                _abort_guest_chat_stream(abandoned_context)
+            finally:
+                UPSTREAM_SEMAPHORE.release()
+            raise
+        except Exception:
+            UPSTREAM_SEMAPHORE.release()
+            LOGGER.exception("Unhandled guest stream setup failure")
+            return _openai_error(
+                500,
+                ProtocolError(
+                    "bridge_internal_error",
+                    "The local bridge encountered an unexpected error.",
+                    stage="local",
+                    retryable=False,
+                ),
+            )
+
+        completion_id = "chatcmpl-" + uuid.uuid4().hex
+        created = int(time.time())
+        response_conversation_id = stream_context.public_conversation_id
+        return StreamingResponse(
+            _guest_completion_sse(
+                stream_context,
+                completion_id=completion_id,
+                model=request.model,
+                created=created,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "X-Conversation-Id": response_conversation_id,
+                "X-Chat-Conversation-Id": response_conversation_id,
+                "X-ChatGPT-Bridge-Attempts": str(stream_context.stream.attempts),
+                "X-ChatGPT-Identity-Mode": "guest",
+            },
+        )
+
     try:
         if local_account is not None:
             async with AUTH_UPSTREAM_SEMAPHORE:
@@ -2745,27 +3056,7 @@ async def chat_completions(
             _expire_auth_cookie(response, http_request)
         return response
     except ProtocolError as error:
-        if error.code == "conversation_not_found":
-            status = 404
-        elif error.upstream_status == 401:
-            status = 401
-        elif error.upstream_status == 403:
-            # A valid account can receive 403 for a plan-gated model/tool or an
-            # upstream challenge.  Treating every forbidden response as an
-            # expired credential would destroy a healthy local login.
-            status = 403
-        elif error.upstream_status == 429:
-            status = 429
-        elif error.code.endswith("_network_error"):
-            status = 503
-        elif error.stage in {"dependency", "local_session"}:
-            status = 503
-        elif error.stage == "validation":
-            status = 400
-        else:
-            # In particular, an HTTP-200 DPU without terminal `complete` is an
-            # upstream protocol failure, never an empty successful completion.
-            status = 502
+        status = _protocol_error_status(error)
         response = _openai_error(status, error)
         if status == 401 and local_handle:
             _remove_account_state(local_handle)

@@ -748,7 +748,9 @@ class AccountBindingTests(unittest.TestCase):
         self.assertIn(auth_session.OPENAI_CREDIT_RATE_CARD_URL, pricing["sourceUrls"])
         self.assertIn(auth_session.OPENAI_API_PRICING_URL, pricing["sourceUrls"])
         self.assertIn("not an actual API bill", pricing["note"])
-        self.assertTrue(any("2.5x" in item for item in pricing["limitations"]))
+        self.assertTrue(
+            any("not applied again" in item for item in pricing["limitations"])
+        )
         self.assertNotIn("tokens", str(usage["usage"]))
         rendered = str(usage)
         self.assertNotIn("fixture-user-must-not-leak", rendered)
@@ -878,8 +880,9 @@ class AccountBindingTests(unittest.TestCase):
         self.assertEqual(details["summary"]["apiEquivalentUsd"], 0.12)
         bucket = details["dailyUsageBuckets"][0]
         self.assertEqual(bucket["credits"], 3)
-        self.assertEqual(bucket["models"][0]["credits"], 200)
-        self.assertEqual(bucket["productSurfaceUsageValues"], {"cli": 100})
+        self.assertIsNone(bucket["models"][0]["credits"])
+        self.assertEqual(bucket["productSurfaceUsageValues"], {})
+        self.assertIsNone(bucket["clients"][0]["credits"])
         self.assertIsNone(bucket["clients"][1]["credits"])
         self.assertEqual(bucket["totals"]["uncachedTextInputTokens"], 10)
         self.assertIsNone(bucket["totals"]["cachedTextInputTokens"])

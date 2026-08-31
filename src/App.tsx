@@ -70,6 +70,10 @@ import {
 } from './lib/authState'
 import type { ReasoningModelOption, ReasoningSliderOption } from './ReasoningPicker'
 import { streamChatReply } from './lib/chatTransport'
+import {
+  guestAssistantTurnUi,
+  shouldStickToConversationBottom,
+} from './lib/guestConversation'
 import { accountUsageErrorMessage, getAccountUsage } from './lib/accountUsage'
 import {
   AccountSettingsError,
@@ -605,6 +609,24 @@ function turnRequestText(turn: Turn) {
   return text ? `${text}\n\n${attachmentText}` : attachmentText
 }
 
+async function writeConversationText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textArea = document.createElement('textarea')
+  textArea.value = text
+  textArea.setAttribute('readonly', '')
+  textArea.style.position = 'fixed'
+  textArea.style.opacity = '0'
+  document.body.append(textArea)
+  textArea.select()
+  const copied = document.execCommand('copy')
+  textArea.remove()
+  if (!copied) throw new Error('Copy failed')
+}
+
 const SIDEBAR_KEY = 'lightweight-web.desktop-sidebar-collapsed'
 
 function readRoute(): RouteKey {
@@ -956,6 +978,8 @@ function App() {
   const [selectedAttachments, setSelectedAttachments] = useState<ComposerAttachment[]>([])
   const [micState, setMicState] = useState<PlusMicState>('idle')
   const [notice, setNotice] = useState<{ id: number; message: string } | null>(null)
+  const [copiedTurnId, setCopiedTurnId] = useState<Turn['id'] | null>(null)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [theme, setTheme] = useState<ThemeMode>(() => (localStorage.getItem('replica-theme') as ThemeMode) || 'system')
   const [language, setLanguage] = useState(() => localStorage.getItem('replica-language') || 'auto')
   const [accountSettings, setAccountSettings] = useState<AccountSettings>(DEFAULT_ACCOUNT_SETTINGS)
@@ -997,7 +1021,9 @@ function App() {
   const imageInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const threadEndRef = useRef<HTMLDivElement>(null)
+  const conversationViewRef = useRef<HTMLElement>(null)
+  const stickToConversationBottomRef = useRef(true)
+  const copyResetTimerRef = useRef<number | null>(null)
   const generationAbortRef = useRef<AbortController | null>(null)
   const usageAbortRef = useRef<AbortController | null>(null)
   const historyListAbortRef = useRef<AbortController | null>(null)
@@ -1118,6 +1144,20 @@ function App() {
       .replace(/^GPT-/i, '')
   })()
   const notify = useCallback((message: string) => setNotice({ id: noticeIdRef.current++, message }), [])
+
+  const updateConversationStickiness = useCallback((scroller: HTMLElement) => {
+    const shouldStick = shouldStickToConversationBottom(scroller)
+    stickToConversationBottomRef.current = shouldStick
+    setShowScrollToBottom(!shouldStick)
+  }, [])
+
+  const scrollConversationToBottom = useCallback(() => {
+    const scroller = conversationViewRef.current
+    if (!scroller) return
+    stickToConversationBottomRef.current = true
+    setShowScrollToBottom(false)
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
+  }, [])
 
   const setScopedServiceTier = useCallback((tier: RequestServiceTier | undefined) => {
     if (activeConversationId) {
@@ -2063,9 +2103,22 @@ function App() {
     textarea.style.height = `${Math.min(192, Math.max(minimumHeight, textarea.scrollHeight))}px`
   }, [isHomeRoute, isReturnedHome, prompt])
 
-  useEffect(() => {
-    if (isHomeRoute) threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [isGenerating, isHomeRoute, turns])
+  useLayoutEffect(() => {
+    if (!isHomeRoute || !hasConversation || !stickToConversationBottomRef.current) return
+    const scroller = conversationViewRef.current
+    if (!scroller) return
+    const frame = window.requestAnimationFrame(() => {
+      // Streaming produces many small updates. An immediate scroll keeps the
+      // active line steady without queueing a long chain of smooth animations.
+      scroller.scrollTop = scroller.scrollHeight
+      setShowScrollToBottom(false)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [hasConversation, isGenerating, isHomeRoute, turns])
+
+  useEffect(() => () => {
+    if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current)
+  }, [])
 
   useEffect(() => {
     if (sidebarRef.current) sidebarRef.current.inert = isMobile && !mobileDrawerOpen
@@ -2197,6 +2250,9 @@ function App() {
     generation?.abort()
     setGuestConversationId(createLocalConversationId())
     setTurns([]); setPrompt(''); setSelectedAttachments([]); setWebSearch(false); setIsGenerating(false)
+    stickToConversationBottomRef.current = true
+    setShowScrollToBottom(false)
+    setCopiedTurnId(null)
     setActiveConversationId(null); setPlusLayer(null)
     navigate('/')
     window.setTimeout(() => textareaRef.current?.focus(), 50)
@@ -2218,6 +2274,40 @@ function App() {
 
   const stopGenerating = () => {
     generationAbortRef.current?.abort()
+  }
+
+  const showCopiedReply = (turnId: Turn['id']) => {
+    if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current)
+    setCopiedTurnId(turnId)
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopiedTurnId(null)
+      copyResetTimerRef.current = null
+    }, 1_800)
+  }
+
+  const copyAssistantReply = async (turn: Turn) => {
+    try {
+      await writeConversationText(turn.text)
+      showCopiedReply(turn.id)
+      notify('已复制')
+    } catch {
+      notify('无法访问剪贴板')
+    }
+  }
+
+  const shareAssistantReply = async (turn: Turn) => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ text: turn.text })
+        return
+      }
+      await writeConversationText(turn.text)
+      showCopiedReply(turn.id)
+      notify('已复制分享内容')
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      notify('无法分享此回复')
+    }
   }
 
   const submitText = (
@@ -2260,6 +2350,8 @@ function App() {
     const selectedServiceTier = isPaidExperience ? effectiveServiceTier : undefined
     generationAbortRef.current = controller
 
+    stickToConversationBottomRef.current = true
+    setShowScrollToBottom(false)
     setTurns((current) => [...current, userTurn])
     abortDictation()
     setPrompt(''); setSelectedAttachments([]); setLayer(null); setIsGenerating(true)
@@ -2307,7 +2399,7 @@ function App() {
           setTurns((current) => {
             const hasAssistantTurn = current.some((turn) => turn.id === assistantId)
             if (!hasAssistantTurn) {
-              return [...current, { id: assistantId, role: 'assistant', text: '已停止生成', stopped: true }]
+              return current
             }
             return current.map((turn) => turn.id === assistantId
               ? { ...turn, stopped: true }
@@ -2913,7 +3005,7 @@ function App() {
             </button>
           </div>
         </header>
-        <div className="sidebar-new-chat"><SidebarRow icon="compose" label="新聊天" active={isHomeRoute} href="/" onClick={newChat} /></div>
+        <div className="sidebar-new-chat"><SidebarRow icon="compose" label="新聊天" active={isHomeRoute && !hasConversation} href="/" onClick={newChat} /></div>
         <nav className="sidebar-navigation">
           <div className="sidebar-nav-top">
             <div ref={searchFeatureAnchorRef} className="sidebar-feature-anchor sidebar-search-anchor" onPointerEnter={() => route !== 'images' && openFeatureOnHover('search-card')} onPointerLeave={() => route !== 'images' && scheduleFeatureClose('search-card')}>
@@ -2996,35 +3088,70 @@ function App() {
         {!isAuthenticated && !isPluginRoute && <ProductCard open={layer === 'product'} onClose={closeLayer} onLogin={() => showAuth('login')} onSignup={() => showAuth('signup')} anchorRef={productTriggerRef} placement={route === 'images' ? 'images' : 'anchor'} />}
 
         {isHomeRoute && <>
-          {hasConversation && <section className="conversation-view" aria-label="对话"><div className="conversation-thread" data-conversation-transcript="">
-          {turns.map((turn) => <article className={`chat-turn ${turn.role}-turn${turn.stopped ? ' stopped-turn' : ''}`} data-message-role={turn.role} key={turn.id}>
-            {turn.role === 'assistant'
-              ? <div className="assistant-turn-body">
-                <div className="assistant-message markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.text}</ReactMarkdown></div>
-                {!turn.stopped && turn.text && <div className="assistant-actions" aria-label="消息操作">
-                  <button type="button" aria-label="复制" title="复制" onClick={() => {
-                    void navigator.clipboard.writeText(turn.text).then(() => notify('已复制'))
-                  }}><CopyMessageIcon /></button>
-                  <button type="button" aria-label="分享" title="分享" onClick={() => {
-                    if (navigator.share) {
-                      void navigator.share({ text: turn.text }).catch(() => undefined)
-                      return
-                    }
-                    void navigator.clipboard.writeText(turn.text).then(() => notify('已复制分享内容'))
-                  }}><ShareMessageIcon /></button>
+          {hasConversation && <section
+            ref={conversationViewRef}
+            className="conversation-view"
+            aria-label={turns.findLast((turn) => turn.role === 'user')?.text || '对话'}
+            onScroll={(event) => updateConversationStickiness(event.currentTarget)}
+          ><ol className="conversation-thread" data-conversation-transcript="" aria-busy={isGenerating} aria-label="对话" aria-live="polite">
+          {turns.map((turn, index) => {
+            if (turn.role === 'user') return <li className="chat-turn user-turn" data-message-role="user" key={turn.id}>
+              <h2 className="sr-only">你说：</h2>
+              <div className="user-turn-body">
+                {turn.attachments && turn.attachments.length > 0 && <div className="user-attachments" aria-label="消息附件">
+                  {turn.attachments.map(({ id, file }) => <span className="user-attachment" key={id} title={file.name}>
+                    <Icon name={file.type.startsWith('image/') ? 'photo' : 'file'} size={18} /><span>{file.name}</span>
+                  </span>)}
+                </div>}
+                {turn.text && <button className="user-message" type="button">{turn.text}</button>}
+              </div>
+            </li>
+
+            const assistantUi = guestAssistantTurnUi({
+              hasText: Boolean(turn.text),
+              isGenerating,
+              isLastTurn: index === turns.length - 1,
+            })
+            return <li
+              className={`chat-turn assistant-turn${turn.stopped ? ' stopped-turn' : ''}${assistantUi.streaming ? ' is-streaming' : ''}`}
+              data-message-role="assistant"
+              key={turn.id}
+            >
+              <h2 className="sr-only">ChatGPT 说：</h2>
+              <div className="assistant-turn-body">
+                {turn.text && <div className="assistant-message markdown-body">
+                  <ReactMarkdown
+                    components={{
+                      a: ({ children, node: _node, ...props }) => <a {...props} rel="noreferrer noopener" target="_blank">{children}</a>,
+                    }}
+                    remarkPlugins={[remarkGfm]}
+                  >{turn.text}</ReactMarkdown>
+                </div>}
+                {assistantUi.showActions && <div className="assistant-actions" aria-label="回复操作" role="group">
+                  <button
+                    type="button"
+                    aria-label={copiedTurnId === turn.id ? '已复制回复' : '复制回复'}
+                    title={copiedTurnId === turn.id ? '已复制' : '复制'}
+                    onClick={() => { void copyAssistantReply(turn) }}
+                  >{copiedTurnId === turn.id ? <Icon name="check" size={20} /> : <CopyMessageIcon />}</button>
+                  <button type="button" aria-label="分享" title="分享" onClick={() => { void shareAssistantReply(turn) }}><ShareMessageIcon /></button>
                 </div>}
               </div>
-              : <div className="user-message">{turn.text}</div>}
-          </article>)}
-          {isGenerating && turns.at(-1)?.role !== 'assistant' && <article className="chat-turn assistant-turn is-generating" data-message-role="assistant" aria-label="ChatGPT 正在思考"><div className="thinking-dots"><i /><i /><i /></div></article>}
-          <div ref={threadEndRef} />
-        </div></section>}
+            </li>
+          })}
+          {isGenerating && turns.at(-1)?.role !== 'assistant' && <li className="chat-turn assistant-turn is-generating" data-message-role="assistant" aria-label="ChatGPT 正在思考">
+            <h2 className="sr-only">ChatGPT 说：</h2><div className="thinking-dot" aria-hidden="true"><i /></div>
+          </li>}
+        </ol></section>}
+          {hasConversation && showScrollToBottom && <button className="scroll-to-bottom-button" type="button" aria-label="滚动到底部" onClick={scrollConversationToBottom}>
+            <svg aria-hidden="true" fill="none" viewBox="0 0 20 20"><path d="m5.5 8 4.5 4.5L14.5 8" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg>
+          </button>}
 
         <section className="composer-dock"><div className="composer-positioner">
           {!hasConversation && <h1>{isReturnedHome
             ? <span className="returned-home-heading">准备好了，随时开始</span>
             : <><span className="desktop-heading">我们先从哪里开始呢？</span><span className="mobile-heading">你想做点什么？</span></>}</h1>}
-          {hasConversation && <p className="conversation-disclaimer">ChatGPT 是 AI，可能会犯错。</p>}
+          {hasConversation && !isGenerating && <p className="conversation-disclaimer">ChatGPT 是 AI，可能会犯错。</p>}
           <form className={`chat-composer${selectedAttachments.length || webSearch ? ' has-context' : ''}`} onSubmit={submit}>
             {(selectedAttachments.length > 0 || webSearch) && <div className="composer-context-strip">
               {webSearch && <button className="composer-context-chip" type="button" onClick={() => setWebSearch(false)} title="移除网页搜索"><Icon name="web-search" size={16} /><span>网页搜索</span><b aria-hidden="true">×</b></button>}

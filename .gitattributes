@@ -1,0 +1,7 @@
+* text=auto
+
+# Container entrypoints must stay LF even when contributors use Windows.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

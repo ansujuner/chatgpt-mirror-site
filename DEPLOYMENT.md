@@ -61,6 +61,35 @@ npm run dev:lan
 
 ## 公网部署
 
+### Render 单服务部署
+
+仓库根目录提供 `Dockerfile`、`render.yaml` 和 `deploy/render-entrypoint.sh`。它们会：
+
+- 使用 Node 24 构建 Vite 前端。
+- 在运行时保留 Node 24 和 Python 3.11，满足 bridge 的协议运行依赖。
+- 由 Caddy 在 Render 注入的 `PORT` 上提供 `dist/`，并把 `/api/*` 转发到容器内仅监听回环地址的单 worker Python bridge。
+- 根据 Render 的 `RENDER_EXTERNAL_URL` 设置浏览器可见 HTTPS Origin，并使用 Secure、SameSite=Strict 的 HttpOnly Session Cookie。
+
+点击 README 中的 **Deploy to Render**，登录 Render 并审核 Blueprint 后即可创建免费单实例服务。部署成功后先检查：
+
+```text
+https://<service>.onrender.com/api/health/live
+https://<service>.onrender.com/api/health/ready
+https://<service>.onrender.com/api/auth/session
+```
+
+前两个地址应返回 JSON；Session 摘要接口在未登录时也应返回 JSON，而不能是静态站的 HTML 404/405。免费实例休眠、容器重启或重新部署会清空内存中的 Session 和对话绑定。
+
+添加 Render 自定义域名后，必须把以下变量改成浏览器实际访问的唯一规范域名，然后重新部署：
+
+```text
+CHATGPT_BRIDGE_PUBLIC_ORIGIN=https://chat.example.com
+CHATGPT_BRIDGE_ALLOWED_ORIGINS=https://chat.example.com
+CHATGPT_BRIDGE_ALLOWED_HOSTS=chat.example.com
+```
+
+不要把 Session、Cookie、access token 或任何长期密钥写入 Blueprint、Docker build argument 或 GitHub Actions。
+
 ### 1. 构建前端
 
 ```powershell

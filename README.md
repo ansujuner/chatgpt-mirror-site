@@ -4,6 +4,12 @@
 
 公网静态演示：<https://ansujuner.github.io/>。GitHub Pages 版本使用匿名 Mock 对话；Session 登录、真实历史记录、账号设置和上游聊天仍需要部署 Python bridge，且不会把任何 Session 或令牌写入静态站点。
 
+完整同源版本可以使用仓库根目录的 `render.yaml` 和 `Dockerfile` 部署到 Render：
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ansujuner/ansujuner.github.io)
+
+Render 服务会在同一个 HTTPS Origin 提供前端和 `/api/*`，因此 Session 登录、HttpOnly Cookie、Codex 额度及设置接口可以按生产边界工作。首次免费实例休眠或每次重新部署都会清空仅存于进程内存的 Session，需要重新登录。
+
 ## 功能
 
 - Free / Plus / Pro 三种账号首页（桌面 / 移动端）与未登录界面

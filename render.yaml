@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: chatgpt-mirror-site
+    runtime: docker
+    plan: free
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health/live
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: CHATGPT_AUTH_COOKIE_SECURE
+        value: "true"
+      - key: CHATGPT_AUTH_COOKIE_SAMESITE
+        value: strict
+      - key: CHATGPT_AUTH_VERIFY_TLS
+        value: "true"
+      - key: CHATGPT_BRIDGE_VERIFY_TLS
+        value: "true"
+      - key: CHATGPT_BRIDGE_TRUSTED_PROXY_IPS
+        value: 127.0.0.1

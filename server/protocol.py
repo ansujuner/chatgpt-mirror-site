@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import copy
 import datetime as datetime_module
-import html
 import json
 import logging
 import os
@@ -15,11 +15,12 @@ import threading
 import time
 import urllib.parse
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, ProcessingInstruction
 from curl_cffi import requests
 
 
@@ -167,7 +168,10 @@ class ProtocolSession:
     conversation_id: str | None = None
     created_monotonic: float = field(default_factory=time.monotonic)
     last_used_monotonic: float = field(default_factory=time.monotonic)
-    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    # A primitive Lock may be released by a different worker thread. FastAPI's
+    # ``asyncio.to_thread`` does not guarantee that successive streaming reads
+    # use the same pool thread, while the lock still must span the whole turn.
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     closed: bool = False
 
     def close(self) -> None:
@@ -196,6 +200,153 @@ class ParsedDpu:
     conversation_id: str
     conversation_state: dict[str, Any]
     assistant_message_id: str | None
+
+
+_DPU_FRAME_HEADER = re.compile(
+    r'\A<template data-web-mobile-dpu-frame="(?P<length>[0-9]{1,9})">'
+)
+_DPU_FRAME_END = "</template>"
+_MAX_DPU_FRAME_CHARACTERS = 32 * 1024 * 1024
+
+
+class DpuFrameDecoder:
+    """Incrementally split the character-counted web-mobile DPU envelope.
+
+    ``data-web-mobile-dpu-frame`` is the JavaScript/UTF-16 character length of
+    the outer template's *inner* HTML, not its UTF-8 byte length. The transport
+    decoder therefore has to preserve partial multibyte code points and apply
+    HTML newline normalization before measuring a frame. Original bytes are
+    retained separately for the authoritative terminal parser and diagnostics.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._raw = bytearray()
+        self._utf8_decoder = codecs.getincrementaldecoder("utf-8")("strict")
+        self._pending_cr = False
+
+    @property
+    def raw_bytes(self) -> bytes:
+        return bytes(self._raw)
+
+    def _normalize_newlines(self, text: str, *, final: bool = False) -> str:
+        if self._pending_cr:
+            text = "\r" + text
+            self._pending_cr = False
+        if not final and text.endswith("\r"):
+            text = text[:-1]
+            self._pending_cr = True
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
+    @staticmethod
+    def _utf16_slice_end(value: str, units: int) -> int | None:
+        if units == 0:
+            return 0
+        consumed = 0
+        for index, character in enumerate(value):
+            consumed += 2 if ord(character) > 0xFFFF else 1
+            if consumed == units:
+                return index + 1
+            if consumed > units:
+                raise ProtocolError(
+                    "dpu_invalid_frame_length",
+                    "The DPU frame length split a UTF-16 surrogate pair.",
+                    stage="conversation_dpu",
+                    retryable=True,
+                )
+        return None
+
+    def _extract_frames(self) -> list[str]:
+        frames: list[str] = []
+        while self._buffer:
+            match = _DPU_FRAME_HEADER.match(self._buffer)
+            if match is None:
+                prefix = '<template data-web-mobile-dpu-frame="'
+                if len(self._buffer) < len(prefix) and prefix.startswith(self._buffer):
+                    break
+                if self._buffer.startswith(prefix) and ">" not in self._buffer:
+                    if len(self._buffer) <= 96:
+                        break
+                raise ProtocolError(
+                    "dpu_invalid_frame_header",
+                    "The DPU stream contained an invalid frame header.",
+                    stage="conversation_dpu",
+                    retryable=True,
+                )
+
+            frame_length = int(match.group("length"))
+            if frame_length > _MAX_DPU_FRAME_CHARACTERS:
+                raise ProtocolError(
+                    "dpu_frame_too_large",
+                    "The DPU stream declared an oversized frame.",
+                    stage="conversation_dpu",
+                    retryable=True,
+                )
+            body_start = match.end()
+            relative_end = self._utf16_slice_end(
+                self._buffer[body_start:], frame_length
+            )
+            if relative_end is None:
+                break
+            frame_end = body_start + relative_end
+            envelope_end = frame_end + len(_DPU_FRAME_END)
+            if len(self._buffer) < envelope_end:
+                break
+            if self._buffer[frame_end:envelope_end] != _DPU_FRAME_END:
+                raise ProtocolError(
+                    "dpu_invalid_frame_length",
+                    "The DPU frame character length did not match its envelope.",
+                    stage="conversation_dpu",
+                    retryable=True,
+                )
+            frames.append(self._buffer[body_start:frame_end])
+            self._buffer = self._buffer[envelope_end:]
+        return frames
+
+    def feed(self, chunk: bytes) -> list[str]:
+        if not isinstance(chunk, (bytes, bytearray)):
+            raise ProtocolError(
+                "dpu_invalid_transport_chunk",
+                "The DPU transport returned a non-byte chunk.",
+                stage="conversation_dpu",
+                retryable=True,
+            )
+        if not chunk:
+            return []
+        self._raw.extend(chunk)
+        try:
+            decoded = self._utf8_decoder.decode(bytes(chunk), final=False)
+        except UnicodeDecodeError as error:
+            raise ProtocolError(
+                "dpu_invalid_utf8",
+                "The DPU stream contained invalid UTF-8.",
+                stage="conversation_dpu",
+                retryable=True,
+            ) from error
+        self._buffer += self._normalize_newlines(decoded)
+        return self._extract_frames()
+
+    def finish(self) -> None:
+        try:
+            decoded = self._utf8_decoder.decode(b"", final=True)
+        except UnicodeDecodeError as error:
+            raise ProtocolError(
+                "dpu_invalid_utf8",
+                "The DPU stream contained invalid UTF-8.",
+                stage="conversation_dpu",
+                retryable=True,
+            ) from error
+        self._buffer += self._normalize_newlines(decoded, final=True)
+        # No valid frame can be completed solely by flushing UTF-8 because its
+        # ASCII closing envelope would already have forced all prior codepoints
+        # out of the incremental decoder.
+        if self._buffer:
+            raise ProtocolError(
+                "dpu_truncated_frame",
+                "The DPU stream ended in the middle of a frame.",
+                stage="conversation_dpu",
+                retryable=True,
+            )
 
 
 def _compact_json(value: Any) -> str:
@@ -384,7 +535,10 @@ def _encode_form(values: Mapping[str, Any]) -> bytes:
 
 def _parse_json_attribute(raw: str, name: str) -> dict[str, Any]:
     try:
-        parsed = json.loads(html.unescape(raw))
+        # BeautifulSoup has already decoded the HTML attribute exactly once.
+        # Unescaping it again would corrupt literal assistant text such as
+        # ``&amp;``, ``&#123;`` or ``&copy;`` inside the JSON string.
+        parsed = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         raise ProtocolError(
             f"invalid_{name}",
@@ -549,6 +703,302 @@ def parse_dpu_response(raw_text: str) -> ParsedDpu:
         conversation_state=state,
         assistant_message_id=message_id,
     )
+
+
+def _dpu_frame_failure(frame_html: str, soup: BeautifulSoup) -> ProtocolError | None:
+    failed_nodes = [
+        node
+        for node in soup.find_all(attrs={"data-conversation-control": True})
+        if node.attrs.get("data-conversation-control") == "failed"
+    ]
+    if not failed_nodes:
+        return None
+    failed = failed_nodes[-1]
+    code = _detect_dpu_failure_code(frame_html, failed.attrs)
+    status_value = failed.attrs.get("data-status") or failed.attrs.get(
+        "data-status-code"
+    )
+    try:
+        status = int(status_value) if status_value is not None else None
+    except (TypeError, ValueError):
+        status = None
+    return ProtocolError(
+        code,
+        f"The DPU stream ended with the failed control ({code}).",
+        stage="conversation_dpu",
+        retryable=True,
+        upstream_status=status,
+    )
+
+
+def _safe_assistant_frame_updates(
+    soup: BeautifulSoup,
+) -> tuple[list[tuple[str, str]], bool]:
+    """Return lossless pending-island updates, or mark presentation unsafe.
+
+    Web-mobile streams rendered HTML rather than raw Markdown.  Plain paragraph
+    text is byte-for-byte compatible with the terminal message content and can
+    be forwarded immediately.  Semantic markup (links, emphasis, code, lists,
+    etc.) is deliberately not reverse-engineered here: once encountered, later
+    presentation frames are held until the authoritative terminal Markdown is
+    available.  This prevents an apparently successful but corrupted answer.
+    """
+
+    updates: list[tuple[str, str]] = []
+    for template in soup.find_all("template", attrs={"data-web-mobile-dpu-apply": True}):
+        target = template.attrs.get("for")
+        if not isinstance(target, str) or not target.startswith("assistant-"):
+            continue
+        if "-committed" in target:
+            # The committed presentation is a duplicate snapshot sent after
+            # the live pending tail; forwarding it would repeat the answer.
+            continue
+
+        is_pending_root = target.endswith("-pending")
+        is_pending_tail = target.endswith("-pending-tail")
+        if not is_pending_root and not is_pending_tail:
+            continue
+        apply_mode = template.attrs.get("data-web-mobile-dpu-apply")
+        if (is_pending_root and apply_mode != "replace") or (
+            is_pending_tail and apply_mode != "append"
+        ):
+            return [], True
+
+        if is_pending_root:
+            paragraphs = template.find_all(
+                "p", attrs={"data-assistant-stream-block": True}
+            )
+            if not paragraphs:
+                # Terminal cleanup replaces the pending island with markers
+                # only. It carries no assistant content.
+                continue
+            if len(paragraphs) != 1:
+                return [], True
+            paragraph = paragraphs[0]
+            if paragraph.find(True) is not None:
+                return [], True
+            parts = [
+                str(child)
+                for child in paragraph.children
+                if isinstance(child, NavigableString)
+                and not isinstance(child, ProcessingInstruction)
+            ]
+            delta = "".join(parts)
+        else:
+            # Tail updates are normally a text node followed by a processing
+            # instruction marker. Any real element means rendered Markdown and
+            # must wait for the terminal source message.
+            if template.find(True) is not None:
+                return [], True
+            parts = [
+                str(child)
+                for child in template.children
+                if isinstance(child, NavigableString)
+                and not isinstance(child, ProcessingInstruction)
+            ]
+            delta = "".join(parts)
+
+        if delta:
+            updates.append(("replace" if is_pending_root else "append", delta))
+    return updates, False
+
+
+def _safe_assistant_frame_delta(soup: BeautifulSoup) -> tuple[str, bool]:
+    """Compatibility helper used by capture validation tests."""
+
+    updates, unsafe = _safe_assistant_frame_updates(soup)
+    return "".join(text for _, text in updates), unsafe
+
+
+class GuestTurnStream:
+    """One opened guest DPU response with incremental assistant deltas."""
+
+    def __init__(
+        self,
+        session: ProtocolSession,
+        response: Any,
+        *,
+        attempts: int,
+        upstream_request_id: str | None,
+    ) -> None:
+        self.session = session
+        self.response = response
+        self.attempts = attempts
+        self.upstream_request_id = upstream_request_id
+        self.observed_conversation_id: str | None = session.conversation_id
+        self._chunks = iter(response.iter_content())
+        self._decoder = DpuFrameDecoder()
+        self._pending: deque[str] = deque()
+        self._rendered_text = ""
+        self._offered_prefix = ""
+        self._presentation_blocked = False
+        self._result: ChatResult | None = None
+        self._closed = False
+
+    @property
+    def result(self) -> ChatResult | None:
+        return self._result
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.response.close()
+        except Exception:
+            LOGGER.debug("Ignoring DPU response close failure", exc_info=True)
+
+    def _finish_from_terminal(self) -> None:
+        try:
+            raw_text = self._decoder.raw_bytes.decode("utf-8", "strict")
+        except UnicodeDecodeError as error:
+            raise ProtocolError(
+                "dpu_invalid_utf8",
+                "The DPU stream contained invalid UTF-8.",
+                stage="conversation_dpu",
+                retryable=True,
+                upstream_request_id=self.upstream_request_id,
+            ) from error
+        parsed = parse_dpu_response(raw_text)
+        if not parsed.answer.startswith(self._offered_prefix):
+            raise ProtocolError(
+                "dpu_stream_prefix_mismatch",
+                "The terminal assistant message did not match the streamed prefix.",
+                stage="conversation_dpu",
+                retryable=True,
+                upstream_request_id=self.upstream_request_id,
+            )
+
+        suffix = parsed.answer[len(self._offered_prefix) :]
+        if suffix:
+            self._pending.append(suffix)
+            self._offered_prefix += suffix
+        self.session.conversation_state = parsed.conversation_state
+        self.session.conversation_id = parsed.conversation_id
+        self.session.last_used_monotonic = time.monotonic()
+        self.observed_conversation_id = parsed.conversation_id
+        self._result = ChatResult(
+            answer=parsed.answer,
+            conversation_id=parsed.conversation_id,
+            conversation_state=parsed.conversation_state,
+            assistant_message_id=parsed.assistant_message_id,
+            upstream_request_id=self.upstream_request_id,
+            attempts=self.attempts,
+        )
+        self.close()
+
+    def _process_frame(self, frame_html: str) -> None:
+        soup = BeautifulSoup(frame_html, "html.parser")
+        failure = _dpu_frame_failure(frame_html, soup)
+        if failure is not None:
+            if failure.upstream_request_id is None:
+                failure.upstream_request_id = self.upstream_request_id
+            raise failure
+
+        conversation_nodes = [
+            node
+            for node in soup.find_all(attrs={"data-conversation-control": True})
+            if node.attrs.get("data-conversation-control") == "conversation-id"
+        ]
+        if conversation_nodes:
+            candidate = conversation_nodes[-1].attrs.get("data-conversation-id")
+            if isinstance(candidate, str) and candidate:
+                self.observed_conversation_id = candidate
+
+        if not self._presentation_blocked:
+            updates, unsafe = _safe_assistant_frame_updates(soup)
+            if unsafe:
+                self._presentation_blocked = True
+            else:
+                for operation, text in updates:
+                    if operation == "replace":
+                        self._rendered_text = text
+                    else:
+                        self._rendered_text += text
+
+                    # A replace frame is a full DOM snapshot, not another SSE
+                    # token. Repeated or extended snapshots must only expose
+                    # the suffix the client has not already received.
+                    if not self._rendered_text.startswith(self._offered_prefix):
+                        self._presentation_blocked = True
+                        break
+                    suffix = self._rendered_text[len(self._offered_prefix) :]
+                    if suffix:
+                        self._pending.append(suffix)
+                        self._offered_prefix += suffix
+
+        complete = any(
+            node.attrs.get("data-conversation-control") == "complete"
+            and node.attrs.get("data-conversation")
+            for node in soup.find_all(attrs={"data-conversation-control": True})
+        )
+        if complete:
+            self._finish_from_terminal()
+
+    def _read_more(self) -> None:
+        if self._closed:
+            raise ProtocolError(
+                "conversation_stream_closed",
+                "The upstream conversation stream has already been closed.",
+                stage="conversation_update",
+                retryable=False,
+                upstream_request_id=self.upstream_request_id,
+            )
+        try:
+            chunk = next(self._chunks)
+        except StopIteration:
+            try:
+                self._decoder.finish()
+                # A valid stream normally finalizes while processing its
+                # complete frame. Re-run the authoritative parser here so EOF
+                # without that control has the buffered path's error semantics.
+                self._finish_from_terminal()
+            except Exception:
+                self.close()
+                raise
+            return
+        except Exception as error:
+            self.close()
+            raise ProtocolError(
+                "conversation_update_network_error",
+                "The upstream conversation update stream failed.",
+                stage="conversation_update",
+                retryable=True,
+                upstream_request_id=self.upstream_request_id,
+            ) from error
+
+        try:
+            for frame_html in self._decoder.feed(chunk):
+                self._process_frame(frame_html)
+                if self._result is not None:
+                    break
+        except Exception:
+            self.close()
+            raise
+
+    def prime(self) -> None:
+        """Read only until a safe first delta or the terminal result exists."""
+
+        if self._closed and self._result is None:
+            self._read_more()
+        while not self._pending and self._result is None:
+            self._read_more()
+
+    def next_delta(self) -> str | None:
+        if self._closed and self._result is None:
+            self._read_more()
+        while not self._pending and self._result is None:
+            self._read_more()
+        if self._pending:
+            return self._pending.popleft()
+        return None
+
+    def iter_deltas(self) -> Iterator[str]:
+        while True:
+            delta = self.next_delta()
+            if delta is None:
+                return
+            yield delta
 
 
 class GuestProtocolBridge:
@@ -892,7 +1342,9 @@ class GuestProtocolBridge:
         session: ProtocolSession,
         prompt: str,
         requirements: RequirementsGrant,
-    ) -> tuple[ParsedDpu, str | None]:
+        *,
+        stream: bool = False,
+    ) -> tuple[ParsedDpu | GuestTurnStream, str | None]:
         continuation = bool(session.conversation_id)
         state = copy.deepcopy(session.conversation_state)
         owner = {"mode": "anonymous", "sessionEpoch": None}
@@ -977,11 +1429,31 @@ class GuestProtocolBridge:
             headers=update_headers,
             data=_encode_form(update_form),
             timeout=self.config.conversation_update_timeout_seconds,
+            stream=stream,
         )
-        _require_http_success(update_response, "conversation_update")
+        try:
+            _require_http_success(update_response, "conversation_update")
+        except Exception:
+            if stream:
+                try:
+                    update_response.close()
+                except Exception:
+                    pass
+            raise
+        upstream_request_id = _response_request_id(update_response)
+        if stream:
+            return (
+                GuestTurnStream(
+                    session,
+                    update_response,
+                    attempts=0,
+                    upstream_request_id=upstream_request_id,
+                ),
+                upstream_request_id,
+            )
         raw_dpu = update_response.content.decode("utf-8", "replace")
         parsed = parse_dpu_response(raw_dpu)
-        return parsed, _response_request_id(update_response)
+        return parsed, upstream_request_id
 
     def run_turn(
         self,
@@ -1016,6 +1488,7 @@ class GuestProtocolBridge:
                 parsed, upstream_request_id = self._conversation_attempt(
                     current, prompt, grant
                 )
+                assert isinstance(parsed, ParsedDpu)
                 current.conversation_state = parsed.conversation_state
                 current.conversation_id = parsed.conversation_id
                 current.last_used_monotonic = time.monotonic()
@@ -1044,6 +1517,92 @@ class GuestProtocolBridge:
                 # retry, refresh root cookies, session id and affinity as well.
                 # Continuations deliberately keep their bound anonymous curl
                 # session and only refresh Sentinel + conduit state.
+                if (
+                    allow_first_turn_rebootstrap
+                    and current.conversation_id is None
+                    and attempt >= 2
+                ):
+                    replacement = self.create_session()
+                    current.close()
+                    current = replacement
+                time.sleep(self.config.retry_base_delay_seconds * attempt)
+
+        assert last_error is not None
+        if current is not session and current.conversation_id is None:
+            current.close()
+        raise ProtocolError(
+            last_error.code,
+            (
+                f"Guest conversation failed after {self.config.max_turn_attempts} "
+                f"attempt(s): {last_error.message}"
+            ),
+            stage=last_error.stage,
+            retryable=False,
+            upstream_status=last_error.upstream_status,
+            upstream_request_id=last_error.upstream_request_id,
+        ) from last_error
+
+    def run_turn_stream(
+        self,
+        session: ProtocolSession,
+        prompt: str,
+        *,
+        allow_first_turn_rebootstrap: bool = True,
+    ) -> tuple[ProtocolSession, GuestTurnStream]:
+        """Open a guest turn and stop buffering once its first safe delta arrives.
+
+        Failures observed before ``prime`` exposes a delta retain the buffered
+        method's retry semantics. Once this method returns, a caller may have
+        forwarded content, so later failures are surfaced by ``next_delta`` and
+        are never retried behind the client's back.
+        """
+
+        if session.closed:
+            raise ProtocolError(
+                "conversation_session_closed",
+                "The local conversation session has already been closed.",
+                stage="local_session",
+                retryable=False,
+            )
+        if not prompt.strip():
+            raise ProtocolError(
+                "empty_prompt",
+                "The prompt must not be empty.",
+                stage="validation",
+                retryable=False,
+            )
+
+        current = session
+        last_error: ProtocolError | None = None
+        for attempt in range(1, self.config.max_turn_attempts + 1):
+            opened: GuestTurnStream | None = None
+            try:
+                grant = self._acquire_requirements(current)
+                candidate, _ = self._conversation_attempt(
+                    current,
+                    prompt,
+                    grant,
+                    stream=True,
+                )
+                assert isinstance(candidate, GuestTurnStream)
+                opened = candidate
+                opened.attempts = attempt
+                opened.prime()
+                return current, opened
+            except ProtocolError as error:
+                if opened is not None:
+                    opened.close()
+                last_error = error
+                LOGGER.warning(
+                    "Guest streaming turn attempt %s/%s failed at %s: %s (%s)",
+                    attempt,
+                    self.config.max_turn_attempts,
+                    error.stage,
+                    error.code,
+                    error.upstream_status,
+                )
+                if attempt >= self.config.max_turn_attempts or not error.retryable:
+                    break
                 if (
                     allow_first_turn_rebootstrap
                     and current.conversation_id is None
