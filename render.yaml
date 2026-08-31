@@ -2,11 +2,15 @@ services:
   - type: web
     name: chatgpt-mirror-site
     runtime: docker
+    repo: https://github.com/ansujuner/chatgpt-mirror-site
+    branch: main
+    region: singapore
     plan: free
     numInstances: 1
+    autoDeployTrigger: checksPass
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    healthCheckPath: /api/health/live
+    healthCheckPath: /api/health/ready
     maxShutdownDelaySeconds: 30
     envVars:
       - key: CHATGPT_AUTH_COOKIE_SECURE

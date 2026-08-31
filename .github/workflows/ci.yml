@@ -1,0 +1,100 @@
+name: Full-stack CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-stack-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server/requirements.txt
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: python -m pip install -r server/requirements.txt
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Build production frontend
+        run: npm run build
+        env:
+          VITE_CHAT_API_MODE: ""
+          VITE_CHAT_API_URL: ""
+          VITE_CHAT_API_TOKEN: ""
+          VITE_HOSTED_SESSION_ONLY: "true"
+
+      - name: Run frontend contract tests
+        run: |
+          npm run test:dev-config
+          npm run test:auth
+          npm run test:guest
+          npm run test:usage
+
+      - name: Run backend tests
+        run: python -m unittest discover -s server -t . -p "test_*.py" -v
+
+      - name: Smoke-test the local backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHATGPT_BRIDGE_HOST=127.0.0.1 CHATGPT_BRIDGE_PORT=18787 \
+            python -m server > /tmp/chatgpt-bridge.log 2>&1 &
+          bridge_pid=$!
+          trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:18787/api/health/ready > /tmp/readiness.json; then
+              break
+            fi
+            if ! kill -0 "$bridge_pid" 2>/dev/null; then
+              cat /tmp/chatgpt-bridge.log
+              exit 1
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat /tmp/chatgpt-bridge.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/readiness.json").read_text())
+          assert payload["status"] == "ok", payload
+          PY

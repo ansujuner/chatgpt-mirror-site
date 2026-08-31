@@ -12,7 +12,8 @@ RUN npm ci
 COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json ./
 COPY public ./public
 COPY src ./src
-RUN VITE_CHAT_API_MODE= VITE_CHAT_API_URL= VITE_CHAT_API_TOKEN= npm run build
+RUN VITE_CHAT_API_MODE= VITE_CHAT_API_URL= VITE_CHAT_API_TOKEN= \
+    VITE_HOSTED_SESSION_ONLY=true npm run build
 
 
 # Reuse the official statically linked Caddy binary for the single public

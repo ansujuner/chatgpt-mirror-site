@@ -12,7 +12,14 @@ from . import app as application
 from .protocol import ChatResult, ProtocolError, ProtocolSession
 
 
-def _request_without_cookie() -> Request:
+def _request_without_cookie(
+    *, origin: str | None = None, fetch_site: str | None = None
+) -> Request:
+    headers = [(b"host", b"127.0.0.1:8787")]
+    if origin is not None:
+        headers.append((b"origin", origin.encode("ascii")))
+    if fetch_site is not None:
+        headers.append((b"sec-fetch-site", fetch_site.encode("ascii")))
     return Request(
         {
             "type": "http",
@@ -22,7 +29,7 @@ def _request_without_cookie() -> Request:
             "path": "/api/chat/completions",
             "raw_path": b"/api/chat/completions",
             "query_string": b"",
-            "headers": [(b"host", b"127.0.0.1:8787")],
+            "headers": headers,
             "client": ("127.0.0.1", 49152),
             "server": ("127.0.0.1", 8787),
         }
@@ -130,6 +137,30 @@ async def _call_and_collect(
 
 
 class GuestStreamingApplicationTests(unittest.TestCase):
+    def test_cross_origin_chat_is_rejected_before_guest_execution(self) -> None:
+        request = application.ChatCompletionRequest(
+            messages=[application.ChatMessage(role="user", content="hello")],
+            stream=True,
+        )
+
+        async def exercise():  # type: ignore[no-untyped-def]
+            with patch.object(application, "_open_guest_chat_stream") as open_stream:
+                response = await application.chat_completions(
+                    _request_without_cookie(
+                        origin="https://attacker.example",
+                        fetch_site="cross-site",
+                    ),
+                    request,
+                    None,
+                    None,
+                )
+                open_stream.assert_not_called()
+                return response
+
+        response = asyncio.run(exercise())
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "origin_not_allowed")
+
     def test_stream_forwards_real_deltas_then_commits_opaque_registry_handle(self) -> None:
         session = _session()
         public_id = "guestconv-opaque-local-handle"

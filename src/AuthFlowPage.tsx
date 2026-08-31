@@ -16,6 +16,7 @@ import {
   type AuthLoginProvider,
   type StartedAuthLogin,
 } from './lib/authFlow'
+import { hostedSessionOnly } from './lib/deploymentMode'
 import {
   authSessionErrorMessage,
   getAuthSession,
@@ -375,6 +376,24 @@ export default function AuthFlowPage({ locationHref, onNavigate, onAuthenticated
   }
 
   const pending = phase === 'starting' || phase === 'pending'
+
+  if (hostedSessionOnly) {
+    return (
+      <main className="auth-flow-page">
+        <a className="auth-flow-brand is-wordmark" href="/" aria-label="ChatGPT 首页" onClick={(event) => go('/', event)}><strong>ChatGPT</strong></a>
+        <section className="auth-flow-card is-generic" aria-labelledby="auth-flow-title">
+          <div className="auth-generic-landing">
+            <h1 id="auth-flow-title">使用 Session 登录</h1>
+            <p className="auth-flow-subtitle">托管版本不提供只能回调到本机的第三方 OAuth 流程。请通过同源后端验证 Session 后使用账号功能。</p>
+            <div className="auth-generic-providers">
+              <button data-auth-provider="session" type="button" onClick={onSessionLogin}><span className="auth-provider-session">◇</span>打开 Session 登录</button>
+            </div>
+            <a className="auth-flow-return" href={callbackPath} onClick={(event) => { event.preventDefault(); onNavigate(callbackPath) }}>返回 ChatGPT</a>
+          </div>
+        </section>
+      </main>
+    )
+  }
 
   return (
     <main className="auth-flow-page">

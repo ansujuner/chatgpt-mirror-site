@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { hostedSessionOnly } from './lib/deploymentMode'
 import './Overlays.css'
 
 export type AuthIntent = 'login' | 'signup' | 'login_or_signup'
@@ -343,7 +344,7 @@ export function AuthDialog({
   }, [open, view])
 
   useEffect(() => {
-    if (!open || view !== 'providers') return
+    if (!open || view !== 'providers' || hostedSessionOnly) return
     if (!window.matchMedia('(min-width: 768px)').matches) return
     const frame = window.requestAnimationFrame(() => emailRef.current?.focus({ preventScroll: true }))
     return () => window.cancelAnimationFrame(frame)
@@ -385,7 +386,27 @@ export function AuthDialog({
           <CloseIcon />
         </button>
 
-        {view === 'providers' ? (
+        {hostedSessionOnly ? (
+          <div className="ov-auth-view" data-view="session-only">
+            <h2 id={titleId}>使用 Session 登录</h2>
+            <p className="ov-auth-subtitle" id={descriptionId}>
+              托管版本会由同源后端验证 Session；浏览器只保存 HttpOnly 登录句柄，不保存上游 Cookie 或访问令牌。
+            </p>
+            <div className="ov-auth-actions">
+              <button
+                className="ov-button ov-primary-button ov-provider-button"
+                data-auth-provider="session"
+                onClick={onSessionLogin}
+                type="button"
+              >
+                <span className="ov-provider-inner">
+                  <span className="ov-provider-icon"><SessionIcon /></span>
+                  <span>继续使用 Session 登录</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        ) : view === 'providers' ? (
           <div className="ov-auth-view" data-view="providers">
             <h2 id={titleId}>登录或注册</h2>
             <p className="ov-auth-subtitle" id={descriptionId}>

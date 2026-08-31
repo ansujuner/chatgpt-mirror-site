@@ -26,7 +26,11 @@ validate_port CHATGPT_BRIDGE_INTERNAL_PORT "$bridge_port"
 # and let Caddy be the only public listener. Avoid a collision if PORT is
 # explicitly overridden to the usual internal value.
 if [ "$bridge_port" = "$public_port" ]; then
-  bridge_port=8788
+  if [ "$public_port" = "8787" ]; then
+    bridge_port=8788
+  else
+    bridge_port=8787
+  fi
 fi
 
 export CHATGPT_BRIDGE_HOST=127.0.0.1
@@ -63,9 +67,18 @@ cat >"$caddy_config" <<EOF
 
 :${public_port} {
 	encode zstd gzip
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), payment=(), usb=()"
+	}
 
 	@api path /api /api/*
 	handle @api {
+		header Cache-Control "no-store"
 		reverse_proxy 127.0.0.1:${bridge_port} {
 			# Render terminates public TLS before forwarding HTTP to this
 			# container. Preserve the browser-visible origin for FastAPI's

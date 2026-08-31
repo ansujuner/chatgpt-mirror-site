@@ -4,11 +4,15 @@
 
 公开源码仓库：<https://github.com/ansujuner/chatgpt-mirror-site>。仓库不会提交任何 Session、Cookie 或访问令牌；完整网页功能需要部署 Python bridge。
 
+GitHub Pages 只能发布静态 HTML、CSS 和 JavaScript，不能运行本项目的 Python 后端。完整托管采用 **GitHub 保存源码并运行 CI + Render 从该 GitHub 仓库自动部署单容器**：Caddy、React 前端和 Python API 共用一个 HTTPS 域名，所有浏览器接口继续使用同源 `/api/*`。
+
 完整同源版本可以使用仓库根目录的 `render.yaml` 和 `Dockerfile` 部署到 Render：
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ansujuner/chatgpt-mirror-site)
 
 Render 服务会在同一个 HTTPS Origin 提供前端和 `/api/*`，因此 Session 登录、HttpOnly Cookie、Codex 额度及设置接口可以按生产边界工作。首次免费实例休眠或每次重新部署都会清空仅存于进程内存的 Session，需要重新登录。
+
+公网构建只显示 Session 登录。Google、Apple、邮箱和电话登录使用的原生 OAuth 客户端只允许回调到用户设备的 `localhost:1455`，不能从云容器可靠完成，因此不会在托管版显示为可用入口。Session 内容只提交给你部署的同源后端用于即时验证，不会写入 GitHub、构建产物或浏览器存储。
 
 ## 功能
 

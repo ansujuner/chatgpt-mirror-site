@@ -2907,6 +2907,16 @@ async def chat_completions(
         alias="X-Chat-Conversation-Id",
     ),
 ) -> JSONResponse | StreamingResponse:
+    if not _same_origin_write(http_request):
+        return _openai_error(
+            403,
+            ProtocolError(
+                "origin_not_allowed",
+                "Chat requests may only be submitted from this site or an explicitly allowed origin.",
+                stage="authentication",
+                retryable=False,
+            ),
+        )
     try:
         latest_user = _latest_user_input(request)
     except ProtocolError as error:

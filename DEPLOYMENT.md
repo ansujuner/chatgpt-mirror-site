@@ -90,6 +90,12 @@ CHATGPT_BRIDGE_ALLOWED_HOSTS=chat.example.com
 
 不要把 Session、Cookie、access token 或任何长期密钥写入 Blueprint、Docker build argument 或 GitHub Actions。
 
+GitHub Pages 不支持 Python 后端，不能用于完整版本。仓库中的 GitHub Actions 只执行前后端测试和生产构建；真正的常驻进程由 Render 从 `ansujuner/chatgpt-mirror-site` 的 `main` 分支构建。首次创建 Blueprint 时必须在 Render 登录并连接 GitHub，之后只有 GitHub CI 通过的提交才会自动部署。
+
+公网容器构建会设置 `VITE_HOSTED_SESSION_ONLY=true`。这是有意的：当前第三方 OAuth 使用固定 loopback 回调 `http://localhost:1455/auth/callback`，该地址在公网浏览器中指向访问者自己的电脑，而不是 Render 容器。托管版因此只提供 Session 登录；不要通过删除 loopback 校验来伪装成已支持公网 OAuth。
+
+免费实例适合验证但不是无状态限制之外的生产保证：空闲休眠、重启或重新部署都会清空内存 Session、对话映射、历史游标和本地 SQLite 设置。若需要长期在线和持久化，需要升级运行实例，并把状态迁移到持久磁盘或外部数据库；仅添加磁盘也不会自动持久化当前的内存 Session。
+
 ### 1. 构建前端
 
 ```powershell
