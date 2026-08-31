@@ -2,11 +2,11 @@
 
 一个用 React + Vite 实现的 ChatGPT 镜像站，包含未登录界面，以及根据当前 Session 自动切换的 Free、Plus、Pro 响应式首页。项目接入本地 Python bridge：未登录请求使用匿名 Web Mobile 协议；Session 登录后使用该账号的认证会话协议。前端不保存上游 Cookie、access token、Sentinel、Turnstile 或 PoW 令牌。
 
-公网静态演示：<https://ansujuner.github.io/>。GitHub Pages 版本使用匿名 Mock 对话；Session 登录、真实历史记录、账号设置和上游聊天仍需要部署 Python bridge，且不会把任何 Session 或令牌写入静态站点。
+公开源码仓库：<https://github.com/ansujuner/chatgpt-mirror-site>。仓库不会提交任何 Session、Cookie 或访问令牌；完整网页功能需要部署 Python bridge。
 
 完整同源版本可以使用仓库根目录的 `render.yaml` 和 `Dockerfile` 部署到 Render：
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ansujuner/ansujuner.github.io)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ansujuner/chatgpt-mirror-site)
 
 Render 服务会在同一个 HTTPS Origin 提供前端和 `/api/*`，因此 Session 登录、HttpOnly Cookie、Codex 额度及设置接口可以按生产边界工作。首次免费实例休眠或每次重新部署都会清空仅存于进程内存的 Session，需要重新登录。
 
