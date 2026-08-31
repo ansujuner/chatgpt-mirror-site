@@ -11,7 +11,6 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /api/health/ready
-    maxShutdownDelaySeconds: 30
     envVars:
       - key: CHATGPT_AUTH_COOKIE_SECURE
         value: "true"
