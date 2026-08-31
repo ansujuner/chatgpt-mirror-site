@@ -350,13 +350,13 @@ function PluginResourcePage({ pluginId, kind, onNavigate }: {
           <>
             <h2>借助 {plugin.name} 在 ChatGPT 中完成更多工作</h2>
             <p>{plugin.description}。连接此插件后，你可以在对话中查找相关信息、整理上下文并执行受支持的操作。</p>
-            <section><h3>关于此插件</h3><p>此本地复刻页面保留了原目标的界面与导航结构；所有操作均停留在本地演示环境。</p></section>
+            <section><h3>关于此插件</h3><p>此本地镜像站页面保留了原目标的界面与导航结构；所有操作均停留在本地演示环境。</p></section>
           </>
         ) : (
           <>
             <p className="plugin-resource-updated">最后更新：2026 年 8 月</p>
             <section><h2>{kind === 'privacy' ? '我们如何处理数据' : '使用本插件'}</h2><p>{kind === 'privacy' ? `只有在你明确连接并使用 ${plugin.name} 时，相关请求所需的信息才会被发送给插件。你可以随时断开连接。` : `使用 ${plugin.name} 即表示你同意遵守适用规则，并仅在你有权访问相关内容时调用插件。`}</p></section>
-            <section><h2>{kind === 'privacy' ? '你的选择' : '可用性与变更'}</h2><p>{kind === 'privacy' ? '你可以选择不连接插件，也可以在设置中撤销授权。此纯前端演示不会上传或保存任何账户数据。' : '插件能力可能会发生变化。此纯前端复刻不提供真实外部服务，也不会代表你执行交易或提交数据。'}</p></section>
+            <section><h2>{kind === 'privacy' ? '你的选择' : '可用性与变更'}</h2><p>{kind === 'privacy' ? '你可以选择不连接插件，也可以在设置中撤销授权。此纯前端演示不会上传或保存任何账户数据。' : '插件能力可能会发生变化。此镜像站不提供真实外部服务，也不会代表你执行交易或提交数据。'}</p></section>
           </>
         )}
       </article>

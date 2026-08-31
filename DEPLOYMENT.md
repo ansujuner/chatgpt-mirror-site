@@ -36,14 +36,14 @@ http://<本机局域网IP>:5173/api/health/ready
 可在管理员 PowerShell 中只放行专用网络的前端端口：
 
 ```powershell
-New-NetFirewallRule -DisplayName 'ChatGPT Replica LAN 5173' `
+New-NetFirewallRule -DisplayName 'ChatGPT Mirror Site LAN 5173' `
   -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5173 -Profile Private
 ```
 
 测试结束后可删除该规则：
 
 ```powershell
-Remove-NetFirewallRule -DisplayName 'ChatGPT Replica LAN 5173'
+Remove-NetFirewallRule -DisplayName 'ChatGPT Mirror Site LAN 5173'
 ```
 
 ### 自定义监听端口

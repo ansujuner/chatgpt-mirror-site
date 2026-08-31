@@ -1,6 +1,6 @@
-# ChatGPT UI Replica
+# ChatGPT 镜像站
 
-一个用 React + Vite 实现的 ChatGPT 界面复刻，包含未登录界面，以及根据当前 Session 自动切换的 Free、Plus、Pro 响应式首页。项目接入本地 Python bridge：未登录请求使用匿名 Web Mobile 协议；Session 登录后使用该账号的认证会话协议。前端不保存上游 Cookie、access token、Sentinel、Turnstile 或 PoW 令牌。
+一个用 React + Vite 实现的 ChatGPT 镜像站，包含未登录界面，以及根据当前 Session 自动切换的 Free、Plus、Pro 响应式首页。项目接入本地 Python bridge：未登录请求使用匿名 Web Mobile 协议；Session 登录后使用该账号的认证会话协议。前端不保存上游 Cookie、access token、Sentinel、Turnstile 或 PoW 令牌。
 
 ## 功能
 
@@ -236,10 +236,10 @@ Content-Type: application/json
 
 | 类型 | 当前实现 |
 | --- | --- |
-| 本地复刻站设置 | 主题、用量图表的显示筛选和键盘快捷键，按账号摘要键保存到本地 SQLite。 |
+| 本地镜像站设置 | 主题、用量图表的显示筛选和键盘快捷键，按账号摘要键保存到本地 SQLite。 |
 | 本地并同步上游 | 界面语言保留本地值，同时写入账号 locale。 |
 | 可直接同步的 ChatGPT 设置 | 对比度、强调色、听写、个性化、动态通知、语音、数据控制、云浏览器默认权限、部分高级安全项和构建者姓名显示等；是否可写以实时 capability 为准。 |
-| 必须使用独立流程 | 自动充值、敏感内容保护、Authenticator/SMS MFA，以及账单、付款方式、取消套餐、密码/通行密钥、活跃会话、存储管理、账号删除、数据导出/删除、家长控制和受信任联系人等。复刻站目前不会伪造成功，也不会把这些操作改成本地布尔值。 |
+| 必须使用独立流程 | 自动充值、敏感内容保护、Authenticator/SMS MFA，以及账单、付款方式、取消套餐、密码/通行密钥、活跃会话、存储管理、账号删除、数据导出/删除、家长控制和受信任联系人等。镜像站目前不会伪造成功，也不会把这些操作改成本地布尔值。 |
 
 通知类别不是硬编码清单。bridge 从当前账号的
 `/backend-api/notifications/settings` 读取类别、展示文本和实际存在的 `push` / `email`

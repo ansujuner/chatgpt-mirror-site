@@ -2038,20 +2038,20 @@ function App() {
   useEffect(() => {
     const path = new URL(locationHref, window.location.origin).pathname
     document.title = route === 'codex-settings'
-      ? 'Codex'
+      ? 'Codex | ChatGPT 镜像站'
       : route === 'images'
-      ? 'ChatGPT 图像 2.0｜AI 图像生成器'
+      ? '图像 | ChatGPT 镜像站'
       : isPluginRoute
-        ? 'ChatGPT Plugins | Browse and add plugins to ChatGPT'
+        ? '插件 | ChatGPT 镜像站'
         : route === 'pricing'
-          ? '定价 | ChatGPT'
+          ? '定价 | ChatGPT 镜像站'
           : route === 'help'
-            ? 'ChatGPT | OpenAI 帮助中心'
+            ? '帮助中心 | ChatGPT 镜像站'
             : route === 'auth'
-              ? '登录 - ChatGPT'
+              ? '登录 | ChatGPT 镜像站'
               : route === 'legal'
-                ? path === '/terms' ? '使用条款 | OpenAI' : path === '/privacy' ? '隐私政策 | OpenAI' : 'OpenAI'
-                : 'ChatGPT'
+                ? path === '/terms' ? '使用条款 | ChatGPT 镜像站' : path === '/privacy' ? '隐私政策 | ChatGPT 镜像站' : 'ChatGPT 镜像站'
+                : 'ChatGPT 镜像站'
   }, [isPluginRoute, locationHref, route])
 
   useEffect(() => {
@@ -2521,7 +2521,7 @@ function App() {
   }
 
   const launchVoiceMode = () => {
-    notify('语音模式与听写是独立功能；当前复刻已保留语音模式入口')
+    notify('语音模式与听写是独立功能；当前镜像站已保留语音模式入口')
   }
 
   const openPlusLayer = (next: Exclude<PlusLayer, null>, anchor?: HTMLElement | null) => {

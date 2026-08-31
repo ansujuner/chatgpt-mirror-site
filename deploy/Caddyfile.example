@@ -16,7 +16,7 @@ chat.example.com {
 	}
 
 	handle {
-		root * /srv/chatgpt-replica/dist
+		root * /srv/chatgpt-mirror-site/dist
 		try_files {path} /index.html
 		file_server
 	}

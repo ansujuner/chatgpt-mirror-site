@@ -438,7 +438,7 @@ function CookieDialog({ onClose }: { onClose: () => void }) {
     <section className="help-cookie-dialog" role="dialog" aria-modal="true" aria-labelledby="help-cookie-title">
       <button className="help-cookie-close" type="button" aria-label="关闭" onClick={onClose}>×</button>
       <h2 id="help-cookie-title">Cookie Preferences</h2>
-      <p>选择此本地复刻可以使用的 Cookie 类型。必要 Cookie 始终启用。</p>
+      <p>选择此本地镜像站可以使用的 Cookie 类型。必要 Cookie 始终启用。</p>
       <label><span><b>Strictly necessary</b><small>用于页面导航和基本功能</small></span><input type="checkbox" checked disabled /></label>
       <label><span><b>Analytics</b><small>帮助了解页面的本地使用情况</small></span><input type="checkbox" checked={analytics} onChange={(event) => setAnalytics(event.currentTarget.checked)} /></label>
       <label><span><b>Personalization</b><small>记住界面选择</small></span><input type="checkbox" checked={personalization} onChange={(event) => setPersonalization(event.currentTarget.checked)} /></label>
@@ -600,13 +600,13 @@ export default function HelpPage({ locationHref, onNavigate }: { locationHref: s
   } else if (contentPath === '/help/data-usage' || contentPath === `/help/articles/${DATA_USAGE_ARTICLE.slug}`) {
     page = <ArticlePage article={DATA_USAGE_ARTICLE} locationHref={locationHref} onNavigate={onNavigate} locale="en" currentPath={rawPath} dataUsage />
   } else if (contentPath === '/help/platform/docs') {
-    page = <LocalTargetPage title="API Documentation" description="Build with OpenAI models, tools, and APIs. This destination remains inside the local replica." onNavigate={onNavigate} locale={locale} currentPath={rawPath} />
+    page = <LocalTargetPage title="API Documentation" description="Build with OpenAI models, tools, and APIs. This destination remains inside the local mirror site." onNavigate={onNavigate} locale={locale} currentPath={rawPath} />
   } else if (contentPath === '/help/status') {
-    page = <LocalTargetPage title="All systems operational" description="The local ChatGPT replica and Help Center are available." onNavigate={onNavigate} locale={locale} currentPath={rawPath} />
+    page = <LocalTargetPage title="All systems operational" description="The local ChatGPT mirror site and Help Center are available." onNavigate={onNavigate} locale={locale} currentPath={rawPath} />
   } else if (contentPath === '/help/privacy-portal') {
     page = <LocalTargetPage title="Privacy Portal" description="Manage local privacy and model-training preferences." onNavigate={onNavigate} locale={locale} currentPath={rawPath} />
   } else if (contentPath.startsWith('/help/local/')) {
-    page = <LocalTargetPage title="Codex Settings" description="Manage general settings for this local replica." onNavigate={onNavigate} locale={locale} currentPath={rawPath} />
+    page = <LocalTargetPage title="Codex Settings" description="Manage general settings for this local mirror site." onNavigate={onNavigate} locale={locale} currentPath={rawPath} />
   } else {
     const articleMatch = contentPath.match(/^\/help\/articles\/([^/]+)$/)
     const collectionMatch = contentPath.match(/^\/help\/collections\/([^/]+)$/)

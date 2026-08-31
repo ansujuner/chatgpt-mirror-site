@@ -664,7 +664,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Local ChatGPT Account Bridge",
+    title="ChatGPT 镜像站 API Bridge",
     version="2.0.0",
     docs_url=None,
     redoc_url=None,

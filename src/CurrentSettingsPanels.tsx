@@ -530,7 +530,7 @@ export function CurrentSettingsPanel({ tab, onAction, onSettingsChange, settings
     // click as a successful action: no request was sent for these rows.
     if (/^已(?:打开|开始|使用)/u.test(message)) {
       const label = message.replace(/^已(?:打开|开始|使用)/u, '').trim() || '此操作'
-      onAction?.(`${label}需要独立页面、二次验证或确认流程；当前复刻站未执行任何更改。`)
+      onAction?.(`${label}需要独立页面、二次验证或确认流程；当前镜像站未执行任何更改。`)
       return
     }
     onAction?.(message)

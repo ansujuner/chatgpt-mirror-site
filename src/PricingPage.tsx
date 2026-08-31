@@ -500,8 +500,8 @@ export default function PricingPage({ onNavigate }: { onNavigate: (path: string)
   ]
 
   useEffect(() => {
-    document.title = '定价 | ChatGPT'
-    return () => { document.title = 'ChatGPT' }
+    document.title = '定价 | ChatGPT 镜像站'
+    return () => { document.title = 'ChatGPT 镜像站' }
   }, [])
 
   useEffect(() => {
