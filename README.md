@@ -2,6 +2,8 @@
 
 一个用 React + Vite 实现的 ChatGPT 镜像站，包含未登录界面，以及根据当前 Session 自动切换的 Free、Plus、Pro 响应式首页。项目接入本地 Python bridge：未登录请求使用匿名 Web Mobile 协议；Session 登录后使用该账号的认证会话协议。前端不保存上游 Cookie、access token、Sentinel、Turnstile 或 PoW 令牌。
 
+公网静态演示：<https://ansujuner.github.io/>。GitHub Pages 版本使用匿名 Mock 对话；Session 登录、真实历史记录、账号设置和上游聊天仍需要部署 Python bridge，且不会把任何 Session 或令牌写入静态站点。
+
 ## 功能
 
 - Free / Plus / Pro 三种账号首页（桌面 / 移动端）与未登录界面
