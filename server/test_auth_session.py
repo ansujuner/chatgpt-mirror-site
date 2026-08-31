@@ -756,6 +756,187 @@ class AccountBindingTests(unittest.TestCase):
         self.assertNotIn("fixture-private-email", rendered)
         self.assertNotIn("fixture-credit-id", rendered)
 
+    def test_actual_workspace_counts_merge_plus_percent_without_pricing_percent(self) -> None:
+        usage = auth_session._sanitize_codex_usage(
+            {
+                "plan_type": "plus",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 10,
+                        "limit_window_seconds": 18_000,
+                    }
+                },
+            },
+            daily_usage_payload=_fixture("wham_daily_usage_percent.json"),
+            daily_usage_counts_payload=_fixture(
+                "wham_daily_workspace_usage_counts.json"
+            ),
+            plan_fallback="plus",
+        )
+
+        details = usage["usage"]
+        self.assertEqual(details["availability"], "available")
+        self.assertEqual(details["units"], "credits")
+        self.assertEqual(details["summary"]["rangeCredits"], 3.75)
+        self.assertEqual(details["summary"]["apiEquivalentUsd"], 0.15)
+        self.assertIs(details["pricing"]["available"], True)
+        self.assertEqual(
+            [bucket["date"] for bucket in details["dailyUsageBuckets"]],
+            ["2026-08-29", "2026-08-30"],
+        )
+        first = details["dailyUsageBuckets"][0]
+        self.assertEqual(first["credits"], 1.75)
+        self.assertEqual(first["apiEquivalentUsd"], 0.07)
+        self.assertEqual(first["planUsagePercent"], 5)
+        self.assertEqual(
+            first["planUsageModels"],
+            [
+                {
+                    "model": "gpt-5.6-codex",
+                    "speed": None,
+                    "planUsagePercent": 5,
+                }
+            ],
+        )
+        self.assertNotIn("credits", first["planUsageModels"][0])
+        self.assertEqual(
+            first["productSurfaceUsagePercentValues"], {"codex_cloud": 5}
+        )
+        self.assertEqual(first["models"][0]["credits"], 1.75)
+        self.assertEqual(first["clients"][0]["clientId"], "codex_cloud")
+        self.assertEqual(first["totals"]["uncachedTextInputTokens"], 1200)
+        self.assertEqual(
+            first["productSurfaceUsageValues"], {"codex_cloud": 1.75}
+        )
+        self.assertEqual(
+            first["productSurfaceApiEquivalentUsd"], {"codex_cloud": 0.07}
+        )
+        self.assertEqual(
+            first["surfaces"],
+            [
+                {
+                    "surface": "codex_cloud",
+                    "credits": 1.75,
+                    "apiEquivalentUsd": 0.07,
+                }
+            ],
+        )
+        self.assertEqual(usage["upstream"]["dailyUsageCounts"], "available")
+        rendered = str(details)
+        self.assertNotIn("must-not-leak", rendered)
+        self.assertNotIn("private-email", rendered)
+
+    def test_percent_daily_usage_is_plan_usage_not_credit_usage(self) -> None:
+        details = auth_session._sanitize_daily_usage(
+            _fixture("wham_daily_usage_percent.json")
+        )
+
+        self.assertEqual(details["availability"], "available")
+        self.assertEqual(details["units"], "percent")
+        self.assertIsNone(details["summary"]["rangeCredits"])
+        self.assertIsNone(details["summary"]["apiEquivalentUsd"])
+        self.assertIs(details["pricing"]["available"], False)
+        first = details["dailyUsageBuckets"][0]
+        self.assertIsNone(first["credits"])
+        self.assertIsNone(first["apiEquivalentUsd"])
+        self.assertEqual(first["models"], [])
+        self.assertEqual(first["surfaces"], [])
+        self.assertEqual(first["planUsagePercent"], 5)
+        self.assertEqual(
+            first["productSurfaceUsagePercentValues"], {"codex_cloud": 5}
+        )
+        self.assertNotIn("credits", str(first["planUsageModels"]))
+
+    def test_workspace_counts_total_is_authoritative_and_schema_is_strict(self) -> None:
+        details = auth_session._sanitize_daily_workspace_usage_counts(
+            {
+                "group_by": "day",
+                "data": [
+                    {
+                        "date": "2026-08-31",
+                        "totals": {
+                            "credits": 3,
+                            "uncached_text_input_tokens": 10,
+                            "cached_text_input_tokens": -1,
+                        },
+                        "models": [
+                            {"model": "actual-model", "credits": 200},
+                            {"model": "", "credits": 1},
+                        ],
+                        "clients": [
+                            {"client_id": "cli", "credits": 100},
+                            {"client_id": "bad", "credits": True},
+                        ],
+                        "credits": 999,
+                        "email": "must-not-leak@example.test",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(details["summary"]["rangeCredits"], 3)
+        self.assertEqual(details["summary"]["apiEquivalentUsd"], 0.12)
+        bucket = details["dailyUsageBuckets"][0]
+        self.assertEqual(bucket["credits"], 3)
+        self.assertEqual(bucket["models"][0]["credits"], 200)
+        self.assertEqual(bucket["productSurfaceUsageValues"], {"cli": 100})
+        self.assertIsNone(bucket["clients"][1]["credits"])
+        self.assertEqual(bucket["totals"]["uncachedTextInputTokens"], 10)
+        self.assertIsNone(bucket["totals"]["cachedTextInputTokens"])
+        self.assertNotIn("999", str(details["summary"]))
+        self.assertNotIn("must-not-leak", str(details))
+
+        string_credit = auth_session._sanitize_daily_workspace_usage_counts(
+            {
+                "data": [
+                    {"date": "2026-08-31", "totals": {"credits": "3"}}
+                ]
+            }
+        )
+        self.assertEqual(string_credit["availability"], "available")
+        self.assertIsNone(string_credit["dailyUsageBuckets"][0]["credits"])
+        self.assertIsNone(string_credit["summary"]["rangeCredits"])
+        self.assertIsNone(string_credit["summary"]["apiEquivalentUsd"])
+
+        malformed = auth_session._sanitize_daily_workspace_usage_counts(
+            {"data": [{"date": "not-a-date", "totals": {"credits": 1}}]}
+        )
+        self.assertEqual(malformed["availability"], "unavailable")
+        self.assertIsNone(malformed["units"])
+        self.assertIsNone(malformed["summary"]["rangeCredits"])
+
+        empty = auth_session._sanitize_daily_workspace_usage_counts({"data": []})
+        self.assertEqual(empty["availability"], "available")
+        self.assertEqual(empty["units"], "credits")
+        self.assertEqual(empty["summary"]["rangeCredits"], 0)
+        self.assertEqual(empty["summary"]["apiEquivalentUsd"], 0)
+
+    def test_percent_only_date_keeps_actual_credit_range_partial(self) -> None:
+        details = auth_session._merge_daily_usage(
+            {
+                "group_by": "day",
+                "data": [
+                    {"date": "2026-08-30", "totals": {"credits": 1}}
+                ],
+            },
+            {
+                "units": "percent",
+                "group_by": "day",
+                "data": [
+                    {"date": "2026-08-29", "models": [{"credits": 5}]},
+                    {"date": "2026-08-30", "models": [{"credits": 10}]},
+                ],
+            },
+        )
+
+        self.assertEqual(details["units"], "credits")
+        self.assertIsNone(details["summary"]["rangeCredits"])
+        self.assertIsNone(details["summary"]["apiEquivalentUsd"])
+        self.assertIsNone(details["dailyUsageBuckets"][0]["credits"])
+        self.assertEqual(details["dailyUsageBuckets"][0]["planUsagePercent"], 5)
+        self.assertEqual(details["dailyUsageBuckets"][1]["credits"], 1)
+        self.assertEqual(details["dailyUsageBuckets"][1]["planUsagePercent"], 10)
+
     def test_api_equivalent_is_null_for_non_credit_units_at_every_level(self) -> None:
         usage = auth_session._sanitize_daily_usage(
             {
