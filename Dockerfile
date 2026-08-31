@@ -55,11 +55,11 @@ RUN groupadd --system app \
 COPY --chown=app:app server ./server
 COPY --chown=app:app --from=frontend-build /app/dist ./dist
 COPY --from=caddy-bin /usr/bin/caddy /usr/local/bin/caddy
-COPY --chown=app:app deploy/render-entrypoint.sh /usr/local/bin/render-entrypoint
-RUN chmod 0755 /usr/local/bin/caddy /usr/local/bin/render-entrypoint
+COPY --chown=app:app deploy/container-entrypoint.sh /usr/local/bin/container-entrypoint
+RUN chmod 0755 /usr/local/bin/caddy /usr/local/bin/container-entrypoint
 
 USER app
 
-EXPOSE 10000
+EXPOSE 8000
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/render-entrypoint"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/container-entrypoint"]

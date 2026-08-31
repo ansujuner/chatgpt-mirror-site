@@ -51,6 +51,17 @@ qa/**/*.webp
 *.sqlite3
 cookies.txt
 session.json
+cookies*.json
+session*.json
+session*.txt
+storage-state*.json
+playwright/.auth/
+.npmrc
+.pypirc
+.netrc
+credentials*.json
+secrets.*
+*.db
 
 # Editor directories and files
 .vscode/*

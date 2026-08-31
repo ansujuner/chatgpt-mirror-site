@@ -1,0 +1,25 @@
+# Hostless builds the existing multi-stage Docker image and runs exactly one
+# stateful replica. Authentication handles, upstream cookie jars, conversation
+# mappings, and concurrency guards are process-local, so horizontal scaling is
+# deliberately disabled.
+build:
+  system: docker
+
+dockerfile_path: "./Dockerfile"
+working_directory: "/"
+build_context_directory: "/"
+
+scaling:
+  trigger: http_requests
+  min_cpu: 1
+  max_cpu: 1
+  min_memory: 1024
+  max_memory: 1024
+  min_replicas: 1
+  max_replicas: 1
+  max_http_requests_per_replica: 10
+
+health_check:
+  type: http
+  http_path: "/api/health/ready"
+  interval_in_seconds: 30

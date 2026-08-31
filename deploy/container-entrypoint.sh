@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-public_port="${PORT:-10000}"
+public_port="${PORT:-8000}"
 bridge_port="${CHATGPT_BRIDGE_INTERNAL_PORT:-8787}"
 
 validate_port() {
@@ -22,9 +22,9 @@ validate_port() {
 validate_port PORT "$public_port"
 validate_port CHATGPT_BRIDGE_INTERNAL_PORT "$bridge_port"
 
-# Render routes public traffic to PORT. Keep the stateful Python bridge private
-# and let Caddy be the only public listener. Avoid a collision if PORT is
-# explicitly overridden to the usual internal value.
+# The hosting platform routes public traffic to PORT. Keep the stateful Python
+# bridge private and let Caddy be the only public listener. Avoid a collision
+# if PORT is explicitly overridden to the usual internal value.
 if [ "$bridge_port" = "$public_port" ]; then
   if [ "$public_port" = "8787" ]; then
     bridge_port=8788
@@ -37,9 +37,10 @@ export CHATGPT_BRIDGE_HOST=127.0.0.1
 export CHATGPT_BRIDGE_PORT="$bridge_port"
 export CHATGPT_BRIDGE_TRUSTED_PROXY_IPS="${CHATGPT_BRIDGE_TRUSTED_PROXY_IPS:-127.0.0.1}"
 
-# Render terminates public TLS before forwarding plain HTTP to this container.
-# Tell the bridge the browser-visible HTTPS origin explicitly so origin checks
-# and Secure cookies do not accidentally use Caddy's internal http:// origin.
+# A hosting edge normally terminates public TLS before forwarding plain HTTP to
+# this container. Use a platform-provided canonical URL when one is available;
+# otherwise Caddy's trusted Host/X-Forwarded-Proto headers let the bridge derive
+# the same-origin HTTPS URL per request.
 if [ -z "${CHATGPT_BRIDGE_PUBLIC_ORIGIN:-}" ]; then
   if [ -n "${RENDER_EXTERNAL_URL:-}" ]; then
     CHATGPT_BRIDGE_PUBLIC_ORIGIN="$RENDER_EXTERNAL_URL"
@@ -57,7 +58,7 @@ if [ -z "${CHATGPT_BRIDGE_ALLOWED_HOSTS:-}" ] && [ -n "${RENDER_EXTERNAL_HOSTNAM
   export CHATGPT_BRIDGE_ALLOWED_HOSTS="${RENDER_EXTERNAL_HOSTNAME},127.0.0.1,localhost"
 fi
 
-caddy_config="$(mktemp /tmp/render-caddy.XXXXXX)"
+caddy_config="$(mktemp /tmp/container-caddy.XXXXXX)"
 cat >"$caddy_config" <<EOF
 {
 	admin off
@@ -80,7 +81,7 @@ cat >"$caddy_config" <<EOF
 	handle @api {
 		header Cache-Control "no-store"
 		reverse_proxy 127.0.0.1:${bridge_port} {
-			# Render terminates public TLS before forwarding HTTP to this
+			# The public edge terminates TLS before forwarding HTTP to this
 			# container. Preserve the browser-visible origin for FastAPI's
 			# same-origin write checks and Secure cookie calculation.
 			header_up Host {host}
@@ -133,8 +134,8 @@ caddy run --config "$caddy_config" --adapter caddyfile &
 proxy_pid=$!
 
 # POSIX sh has no portable `wait -n`. Poll both children and terminate the
-# survivor if either process exits, so Render restarts an unhealthy service
-# instead of leaving a static-only or API-only container running.
+# survivor if either process exits, so the hosting platform restarts an
+# unhealthy service instead of leaving a static-only or API-only container.
 while kill -0 "$backend_pid" 2>/dev/null && kill -0 "$proxy_pid" 2>/dev/null; do
   sleep 1
 done

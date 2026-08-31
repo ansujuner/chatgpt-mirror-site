@@ -61,9 +61,55 @@ npm run dev:lan
 
 ## 公网部署
 
+### Hostless 单服务部署（推荐）
+
+仓库根目录提供 `Dockerfile`、`hostless.yaml` 和 `deploy/container-entrypoint.sh`：
+
+- 使用 Node 24 构建 Vite 前端。
+- 在运行时保留 Node 24 和 Python 3.11，满足 bridge 的协议运行依赖。
+- 由 Caddy 在平台注入的 `PORT` 上提供 `dist/`，并把 `/api/*` 转发到容器内仅监听回环地址的单 worker Python bridge。
+- 固定一个 `1 vCPU / 1 GiB` 副本，避免进程内 Session、Cookie jar 和会话映射被分散到不同实例。
+- 使用 `/api/health/ready` 做 HTTP 健康检查。
+
+在 [Hostless](https://www.hostless.cloud/apps) 使用 GitHub 登录，创建 App 时选择：
+
+```text
+Repository: ansujuner/chatgpt-mirror-site
+Branch: main
+Build system: Docker
+Dockerfile: ./Dockerfile
+```
+
+`hostless.yaml` 已声明 Docker 构建、单副本资源和健康检查。不要再创建 worker 或数据库；Hostless 免费的 `1 vCPU / 1 GiB` 是账号共享总额，不是每个资源各一份。
+
+首次部署可以依靠同源 Host 和可信 Caddy 转发自动计算外部 HTTPS Origin。应用获得 `*.hostless.app` 域名后，在 Hostless 的 Environment Variables 中补充以下非秘密配置并重新部署：
+
+```text
+CHATGPT_AUTH_COOKIE_SECURE=true
+CHATGPT_AUTH_COOKIE_SAMESITE=strict
+CHATGPT_AUTH_VERIFY_TLS=true
+CHATGPT_BRIDGE_VERIFY_TLS=true
+CHATGPT_BRIDGE_TRUSTED_PROXY_IPS=127.0.0.1
+CHATGPT_BRIDGE_PUBLIC_ORIGIN=https://<app>.hostless.app
+CHATGPT_BRIDGE_ALLOWED_ORIGINS=https://<app>.hostless.app
+CHATGPT_BRIDGE_ALLOWED_HOSTS=<app>.hostless.app,127.0.0.1,localhost
+```
+
+部署成功后依次检查：
+
+```text
+https://<app>.hostless.app/api/health/live
+https://<app>.hostless.app/api/health/ready
+https://<app>.hostless.app/api/auth/session
+```
+
+前两个地址应返回 JSON；Session 摘要接口在未登录时也应返回 JSON，而不能是静态站的 HTML 404/405。随后还必须实际验证一次匿名请求、Session 登录和 SSE 流式对话，因为云端出口是否被上游接受、平台代理是否逐块转发 SSE 只能由运行时行为确认。
+
+Hostless 的应用磁盘是临时盘；容器重启或重新部署会清空内存 Session、对话绑定，并可能清空本地 SQLite 设置。不要把 Session、Cookie、access token 或长期密钥写入 `hostless.yaml`、Docker build argument、`.env` 提交或 GitHub Actions。
+
 ### Render 单服务部署
 
-仓库根目录提供 `Dockerfile`、`render.yaml` 和 `deploy/render-entrypoint.sh`。它们会：
+仓库根目录提供 `Dockerfile`、`render.yaml` 和 `deploy/container-entrypoint.sh`。它们会：
 
 - 使用 Node 24 构建 Vite 前端。
 - 在运行时保留 Node 24 和 Python 3.11，满足 bridge 的协议运行依赖。

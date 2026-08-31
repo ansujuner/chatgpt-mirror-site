@@ -29,6 +29,17 @@ __pycache__
 *.sqlite3
 cookies.txt
 session.json
+cookies*.json
+session*.json
+session*.txt
+storage-state*.json
+playwright/.auth
+.npmrc
+.pypirc
+.netrc
+credentials*.json
+secrets.*
+*.db
 
 .env
 .env.*
