@@ -70,6 +70,7 @@ import {
 } from './lib/authState'
 import type { ReasoningModelOption, ReasoningSliderOption } from './ReasoningPicker'
 import { streamChatReply } from './lib/chatTransport'
+import { requiresChatReauthentication } from './lib/chatIdentity'
 import {
   guestAssistantTurnUi,
   shouldStickToConversationBottom,
@@ -2365,6 +2366,7 @@ function App() {
           attachments: attachmentSnapshot.map(({ file }) => file),
           conversationId: upstreamConversationId,
           model: requestModel,
+          requireAuthentication: isAuthenticated,
           onConversationId: (conversationId) => {
             upstreamConversationIdsRef.current.set(conversationKey, conversationId)
           },
@@ -2406,6 +2408,21 @@ function App() {
               : turn)
           })
           return
+        }
+
+        if (
+          isAuthenticated
+          && requestVersionAtSubmit === sessionRequestVersionRef.current
+          && requiresChatReauthentication(error)
+        ) {
+          // A server restart can invalidate the in-memory HttpOnly binding
+          // while React still renders the previous paid account. Do not leave
+          // a stale Plus/Pro shell that repeatedly fails or silently downgrades.
+          ++sessionRequestVersionRef.current
+          resetAccountWorkspace('free')
+          clearAccountSettingsState()
+          setAuthState(ANONYMOUS_AUTH_STATE)
+          setSessionLoginOpen(true)
         }
 
         const message = error instanceof Error ? error.message : String(error)

@@ -126,6 +126,28 @@ def _request_without_cookie() -> Request:
     )
 
 
+def _authenticated_chat_request(handle: str | None = None) -> Request:
+    headers = [(b"host", b"127.0.0.1:8787")]
+    if handle is not None:
+        headers.append(
+            (b"cookie", f"{application.LOCAL_SESSION_COOKIE}={handle}".encode("ascii"))
+        )
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/api/chat/authenticated/completions",
+            "raw_path": b"/api/chat/authenticated/completions",
+            "query_string": b"",
+            "headers": headers,
+            "client": ("127.0.0.1", 49152),
+            "server": ("127.0.0.1", 8787),
+        }
+    )
+
+
 def _data_url(mime_type: str, payload: bytes) -> str:
     return f"data:{mime_type};base64,{base64.b64encode(payload).decode('ascii')}"
 
@@ -544,6 +566,73 @@ class AuthenticatedApplicationTests(unittest.TestCase):
         self.assertEqual(execute.call_args.kwargs["model"], "gpt-5-6-pro")
         self.assertEqual(execute.call_args.kwargs["reasoning_effort"], "standard")
         self.assertEqual(execute.call_args.kwargs["service_tier"], "priority")
+
+    def test_strict_authenticated_chat_never_falls_back_without_cookie(self) -> None:
+        request = application.ChatCompletionRequest(
+            model="gpt-5-6-thinking",
+            messages=[application.ChatMessage(role="user", content="hello")],
+            reasoning_effort="extended",
+            stream=False,
+        )
+
+        with (
+            patch.object(application, "_execute_authenticated_chat") as authenticated,
+            patch.object(application, "_execute_chat") as guest,
+        ):
+            response = asyncio.run(
+                application.chat_completions(
+                    _authenticated_chat_request(), request, None, None
+                )
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            json.loads(response.body)["error"]["code"], "authentication_required"
+        )
+        authenticated.assert_not_called()
+        guest.assert_not_called()
+
+    def test_strict_authenticated_chat_routes_verified_cookie(self) -> None:
+        result = AuthenticatedChatResult(
+            answer="authenticated answer",
+            conversation_id="upstream-conversation-secret",
+            conversation_state={},
+            parent_message_id="upstream-parent",
+            assistant_message_id="upstream-message",
+            upstream_request_id="upstream-request",
+            attempts=1,
+            model="gpt-5-6-thinking",
+        )
+        request = application.ChatCompletionRequest(
+            model="gpt-5-6-thinking",
+            messages=[application.ChatMessage(role="user", content="hello")],
+            reasoning_effort="extended",
+            stream=False,
+        )
+
+        with (
+            patch.object(
+                application,
+                "_execute_authenticated_chat",
+                return_value=("authconv-local-handle", object(), result),
+            ) as authenticated,
+            patch.object(application, "_execute_chat") as guest,
+        ):
+            response = asyncio.run(
+                application.chat_completions(
+                    _authenticated_chat_request(self.handle), request, None, None
+                )
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["X-ChatGPT-Identity-Mode"], "verified-session"
+        )
+        self.assertEqual(
+            authenticated.call_args.kwargs["model"], "gpt-5-6-thinking"
+        )
+        self.assertEqual(authenticated.call_args.kwargs["reasoning_effort"], "extended")
+        guest.assert_not_called()
 
     def test_authenticated_upload_refs_are_forwarded_in_official_user_message(self) -> None:
         class HTTP:

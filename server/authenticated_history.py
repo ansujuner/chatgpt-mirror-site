@@ -21,7 +21,6 @@ from urllib.parse import quote
 from curl_cffi import requests
 
 from .auth_session import (
-    AUTH_UPSTREAM_NETWORK_ATTEMPTS,
     AUTH_VERIFY_TLS,
     CHATGPT_ORIGIN,
     USER_AGENT,
@@ -30,6 +29,32 @@ from .auth_session import (
 
 
 LOGGER = logging.getLogger("chatgpt_account_bridge.history")
+
+
+# History reads are idempotent. In practice the upstream list/message routes
+# occasionally answer with a short-lived gateway response even while the
+# account session itself is healthy. Retry only safe transient statuses;
+# authentication, authorization, and rate-limit responses are deliberately
+# left to the credential-refresh/caller logic.
+_TRANSIENT_HISTORY_STATUSES = frozenset({408, 425, 500, 502, 503, 504})
+
+
+def _history_retry_delay(attempt: int, response: Any | None = None) -> float:
+    """Return a small bounded delay, honoring a numeric Retry-After hint."""
+
+    fallback = min(0.2 * (2**attempt), 0.8)
+    headers = getattr(response, "headers", None)
+    if not isinstance(headers, Mapping):
+        return fallback
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        requested = float(raw)
+    except (TypeError, ValueError):
+        return fallback
+    if not math.isfinite(requested) or requested < 0:
+        return fallback
+    # A large upstream Retry-After must not pin the single free-tier worker.
+    return min(requested, 2.0)
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -47,7 +72,7 @@ def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int
 class AuthenticatedHistoryConfig:
     origin: str = CHATGPT_ORIGIN
     timeout_seconds: int = 25
-    network_attempts: int = AUTH_UPSTREAM_NETWORK_ATTEMPTS
+    network_attempts: int = 2
     verify_tls: bool = AUTH_VERIFY_TLS
     page_turns: int = 100
     max_message_pages: int = 64
@@ -61,7 +86,7 @@ class AuthenticatedHistoryConfig:
                 "CHATGPT_AUTH_HISTORY_TIMEOUT", 25, 5, 120
             ),
             network_attempts=_bounded_env_int(
-                "CHATGPT_AUTH_UPSTREAM_NETWORK_ATTEMPTS", 3, 1, 5
+                "CHATGPT_AUTH_HISTORY_NETWORK_ATTEMPTS", 2, 1, 5
             ),
             page_turns=_bounded_env_int(
                 "CHATGPT_AUTH_HISTORY_PAGE_TURNS", 100, 10, 100
@@ -392,7 +417,6 @@ class AuthenticatedHistoryBridge:
                     allow_redirects=False,
                 )
                 last_network_error = None
-                break
             except Exception as error:
                 last_network_error = error
                 if attempt + 1 < self.config.network_attempts:
@@ -405,7 +429,25 @@ class AuthenticatedHistoryBridge:
                         attempt + 1,
                         self.config.network_attempts,
                     )
-                    time.sleep(min(0.2 * (2**attempt), 0.8))
+                    time.sleep(_history_retry_delay(attempt))
+                continue
+
+            status = int(getattr(response, "status_code", 0) or 0)
+            if (
+                status in _TRANSIENT_HISTORY_STATUSES
+                and attempt + 1 < self.config.network_attempts
+            ):
+                LOGGER.info(
+                    "Transient history HTTP status at %s (%s) "
+                    "(attempt %s/%s)",
+                    stage,
+                    status,
+                    attempt + 1,
+                    self.config.network_attempts,
+                )
+                time.sleep(_history_retry_delay(attempt, response))
+                continue
+            break
         if last_network_error is not None or response is None:
             error_name = (
                 type(last_network_error).__name__
@@ -596,55 +638,67 @@ class AuthenticatedHistoryBridge:
             )
         all_messages: list[Any] = list(raw_messages)
         cursor = self._page_cursor(payload)
+        if len(all_messages) > self.config.max_messages:
+            all_messages = all_messages[-self.config.max_messages :]
+            cursor = ""
         seen_cursors: set[str] = set()
         pages = 1
         while cursor:
             if cursor in seen_cursors:
-                raise AuthSessionError(
-                    "history_invalid_pagination",
-                    "The upstream conversation history cursor did not advance.",
-                    status_code=502,
+                # The newest page is already usable.  A repeated opaque cursor
+                # must stop pagination, but should not make the entire detail
+                # endpoint fail and hide all recent messages.
+                LOGGER.info(
+                    "Stopping history pagination because the cursor did not advance"
                 )
+                break
             seen_cursors.add(cursor)
             if pages >= self.config.max_message_pages or len(all_messages) >= self.config.max_messages:
-                raise AuthSessionError(
-                    "history_conversation_too_large",
-                    "The conversation is too large to load safely.",
-                    status_code=502,
+                LOGGER.info(
+                    "Stopping history pagination at the configured page/message limit"
                 )
-            page = self._request_json(
-                http,
-                credential,
-                f"/backend-api/conversations/{encoded}/messages",
-                stage="messages",
-                params={
-                    "before": cursor,
-                    "include_has_versions": "true",
-                    "num_turns": self.config.page_turns,
-                },
-                referer=referer,
-                additional_headers=project_headers,
-            )
+                break
+            try:
+                page = self._request_json(
+                    http,
+                    credential,
+                    f"/backend-api/conversations/{encoded}/messages",
+                    stage="messages",
+                    params={
+                        "before": cursor,
+                        "include_has_versions": "true",
+                        "num_turns": self.config.page_turns,
+                    },
+                    referer=referer,
+                    additional_headers=project_headers,
+                )
+            except AuthSessionError as error:
+                if error.status_code not in {429, 502, 503}:
+                    raise
+                # Older pages are an enhancement.  Preserve the successfully
+                # fetched recent branch after exhausted transient retries.
+                LOGGER.info(
+                    "Stopping history pagination after a transient older-page failure (%s)",
+                    error.code,
+                )
+                break
             page_messages = page.get("messages")
             if not isinstance(page_messages, list):
-                raise AuthSessionError(
-                    "history_invalid_response",
-                    "The upstream conversation message page was invalid.",
-                    status_code=502,
+                LOGGER.info(
+                    "Stopping history pagination after an invalid older message page"
                 )
+                break
             # The official endpoint returns each page root-to-leaf while
             # `before` walks toward older turns.  Prepend older pages so the
             # no-parent fallback retains a root-to-leaf sequence even when
             # timestamps are missing.
             all_messages = [*page_messages, *all_messages]
             pages += 1
+            if len(all_messages) > self.config.max_messages:
+                # Keep the newest messages and a valid current-node branch.
+                all_messages = all_messages[-self.config.max_messages :]
+                break
             cursor = self._page_cursor(page)
-        if len(all_messages) > self.config.max_messages:
-            raise AuthSessionError(
-                "history_conversation_too_large",
-                "The conversation is too large to load safely.",
-                status_code=502,
-            )
         return {**payload, "messages": all_messages}
 
     def _fetch_legacy_detail(
@@ -697,7 +751,7 @@ class AuthenticatedHistoryBridge:
                 # Both forms are present in current official assets.  Some
                 # accounts still use the full-conversation endpoint when the
                 # paginated rollout is unavailable.
-                if error.code != "history_not_found":
+                if error.code not in {"history_not_found", "history_invalid_response"}:
                     raise
                 payload = self._fetch_legacy_detail(
                     http, credential, identifier, project_id=project_id

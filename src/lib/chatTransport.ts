@@ -1,10 +1,20 @@
 import type { ChatMessage } from '../types'
+import {
+  ChatTransportError,
+  hasVerifiedChatIdentity,
+  resolveChatApiUrl,
+} from './chatIdentity'
 import { streamMockReply } from './mockStream'
 import type { MockReplyOptions } from './mockStream'
 
 export type StreamChatReplyOptions = Omit<MockReplyOptions, 'messages'> & {
   attachments?: readonly File[]
   conversationId?: string
+  /**
+   * Require the server-side verified account bridge. When true the request is
+   * sent to the strict authenticated route, which never falls back to guest.
+   */
+  requireAuthentication?: boolean
   /** @deprecated Prefer the endpoint-native `serviceTier`. */
   fastMode?: boolean
   model?: string
@@ -242,7 +252,7 @@ export async function* streamChatReply(
     return
   }
 
-  const apiUrl = configuredApiUrl || '/api/chat/completions'
+  const apiUrl = resolveChatApiUrl(configuredApiUrl, Boolean(options.requireAuthentication))
   const model = options.model?.trim() || import.meta.env.VITE_CHAT_MODEL?.trim() || 'chatgpt-guest'
 
   if (options.signal?.aborted) throw createAbortError()
@@ -288,7 +298,37 @@ export async function* streamChatReply(
     }
 
     const suffix = detail ? `：${detail}` : ''
-    throw new Error(`聊天接口请求失败（HTTP ${response.status}）${suffix}`)
+    const message = `聊天接口请求失败（HTTP ${response.status}）${suffix}`
+    if (options.requireAuthentication && response.status === 401) {
+      throw new ChatTransportError(message, {
+        status: response.status,
+        code: 'authentication_required',
+        requiresReauthentication: true,
+      })
+    }
+    throw new ChatTransportError(message, { status: response.status })
+  }
+
+  // The strict same-origin route is an end-to-end identity contract, not just
+  // a UI hint. Fail closed if a proxy or stale backend ever answers it through
+  // the anonymous protocol instead of silently spending a guest turn.
+  if (
+    options.requireAuthentication
+    && !hasVerifiedChatIdentity(response.headers)
+  ) {
+    try {
+      await response.body?.cancel()
+    } catch {
+      // The identity mismatch is the decisive failure; body cleanup is best effort.
+    }
+    throw new ChatTransportError(
+      '登录会话未绑定到聊天请求，请重新登录后重试。',
+      {
+        status: 502,
+        code: 'identity_mode_mismatch',
+        requiresReauthentication: true,
+      },
+    )
   }
 
   const responseConversationId = response.headers.get('X-Conversation-Id')?.trim()

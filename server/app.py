@@ -15,7 +15,7 @@ import uuid
 from json import JSONDecodeError
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Callable, Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, Query, Request
@@ -558,10 +558,12 @@ class ConversationRegistry:
 
 @dataclass
 class AuthenticatedRegistryEntry:
-    session: AuthenticatedProtocolSession
+    session: AuthenticatedProtocolSession | None
+    pending_history: HistoryDetail | None = field(repr=False)
     owner: str
     local_id: str
     last_access_monotonic: float
+    resolution_lock: Any = field(default_factory=threading.Lock, repr=False)
 
 
 class AuthenticatedConversationRegistry:
@@ -581,7 +583,9 @@ class AuthenticatedConversationRegistry:
             if now - entry.last_access_monotonic > self.ttl_seconds
         ]
         for key in expired:
-            self._entries.pop(key).session.close()
+            entry = self._entries.pop(key)
+            if entry.session is not None:
+                entry.session.close()
 
         if len(self._entries) <= self.max_entries:
             return
@@ -590,7 +594,8 @@ class AuthenticatedConversationRegistry:
         )
         for key, entry in oldest[: len(self._entries) - self.max_entries]:
             self._entries.pop(key, None)
-            entry.session.close()
+            if entry.session is not None:
+                entry.session.close()
 
     def get(
         self, local_id: str, *, owner: str
@@ -608,6 +613,7 @@ class AuthenticatedConversationRegistry:
         with self._lock:
             self._entries[(owner, local_id)] = AuthenticatedRegistryEntry(
                 session=session,
+                pending_history=None,
                 owner=owner,
                 local_id=local_id,
                 last_access_monotonic=time.monotonic(),
@@ -615,12 +621,87 @@ class AuthenticatedConversationRegistry:
             self._prune_locked()
         return local_id
 
+    def put_pending(self, detail: HistoryDetail, *, owner: str) -> str:
+        """Store private continuation pointers without bootstrapping chat."""
+
+        local_id = "authconv-" + secrets.token_urlsafe(24)
+        with self._lock:
+            self._entries[(owner, local_id)] = AuthenticatedRegistryEntry(
+                session=None,
+                pending_history=detail,
+                owner=owner,
+                local_id=local_id,
+                last_access_monotonic=time.monotonic(),
+            )
+            self._prune_locked()
+        return local_id
+
+    def get_or_resolve(
+        self,
+        local_id: str,
+        *,
+        owner: str,
+        factory: Callable[[HistoryDetail], AuthenticatedProtocolSession],
+    ) -> AuthenticatedProtocolSession | None:
+        """Resolve one pending history continuation exactly once.
+
+        The network-bearing factory runs outside the registry lock. A per-entry
+        lock serializes concurrent first turns, while identity checks on both
+        sides ensure logout/eviction cannot reinsert the newly created session.
+        """
+
+        with self._lock:
+            self._prune_locked()
+            entry = self._entries.get((owner, local_id))
+            if entry is None:
+                return None
+            entry.last_access_monotonic = time.monotonic()
+            if entry.session is not None:
+                return entry.session
+            resolution_lock = entry.resolution_lock
+
+        with resolution_lock:
+            with self._lock:
+                self._prune_locked()
+                current = self._entries.get((owner, local_id))
+                if current is not entry:
+                    return None
+                current.last_access_monotonic = time.monotonic()
+                if current.session is not None:
+                    return current.session
+                detail = current.pending_history
+            if detail is None:
+                return None
+
+            session = factory(detail)
+            installed = False
+            existing: AuthenticatedProtocolSession | None = None
+            try:
+                with self._lock:
+                    self._prune_locked()
+                    current = self._entries.get((owner, local_id))
+                    if current is entry:
+                        if current.session is not None:
+                            existing = current.session
+                        elif current.pending_history is detail:
+                            current.session = session
+                            current.pending_history = None
+                            current.last_access_monotonic = time.monotonic()
+                            installed = True
+                if installed:
+                    return session
+                return existing
+            finally:
+                if not installed:
+                    session.close()
+
     def remove_owner(self, owner: str) -> None:
         with self._lock:
             keys = [key for key, entry in self._entries.items() if entry.owner == owner]
             entries = [self._entries.pop(key) for key in keys]
         for entry in entries:
-            entry.session.close()
+            if entry.session is not None:
+                entry.session.close()
 
     def count(self) -> int:
         with self._lock:
@@ -632,7 +713,8 @@ class AuthenticatedConversationRegistry:
             entries = list(self._entries.values())
             self._entries.clear()
         for entry in entries:
-            entry.session.close()
+            if entry.session is not None:
+                entry.session.close()
 
 
 BRIDGE = GuestProtocolBridge()
@@ -670,6 +752,9 @@ UPSTREAM_SEMAPHORE = asyncio.Semaphore(
 )
 AUTH_UPSTREAM_SEMAPHORE = asyncio.Semaphore(
     _bounded_env_int("CHATGPT_AUTH_MAX_CONCURRENCY", 2, 1, 4)
+)
+AUTH_HISTORY_SEMAPHORE = asyncio.Semaphore(
+    _bounded_env_int("CHATGPT_AUTH_HISTORY_MAX_CONCURRENCY", 1, 1, 4)
 )
 
 
@@ -763,7 +848,10 @@ async def _limit_chat_request_body(
 ) -> JSONResponse | Any:
     """Bound sensitive JSON before FastAPI/Pydantic materializes request data."""
 
-    is_chat = request.method == "POST" and request.url.path == "/api/chat/completions"
+    is_chat = request.method == "POST" and request.url.path in {
+        "/api/chat/completions",
+        "/api/chat/authenticated/completions",
+    }
     is_settings = request.method == "PATCH" and request.url.path in {
         "/api/account/settings",
         "/api/account/model-preference",
@@ -2324,7 +2412,13 @@ def _execute_authenticated_chat(
         selected_model = "auto"
 
     if conversation_id:
-        session = AUTH_CONVERSATIONS.get(conversation_id, owner=owner)
+        session = AUTH_CONVERSATIONS.get_or_resolve(
+            conversation_id,
+            owner=owner,
+            factory=lambda detail: _create_history_continuation(
+                account_entry, detail
+            ),
+        )
         if session is None:
             raise AuthenticatedProtocolError(
                 "conversation_not_found",
@@ -2463,38 +2557,42 @@ def _create_history_continuation(
             refreshed = True
             refresh_local_auth_entry(account_entry)
 
-    last_user = next(
-        (
-            message.upstream_id
-            for message in reversed(detail.messages)
-            if message.role == "user"
-        ),
-        None,
-    )
-    last_assistant = next(
-        (
-            message.upstream_id
-            for message in reversed(detail.messages)
-            if message.role == "assistant"
-        ),
-        None,
-    )
-    with session.lock:
-        session.conversation_id = detail.upstream_id
-        session.parent_message_id = detail.current_node
-        session.model = detail.model
-        session.turn_index = sum(
-            1 for message in detail.messages if message.role == "user"
+    try:
+        last_user = next(
+            (
+                message.upstream_id
+                for message in reversed(detail.messages)
+                if message.role == "user"
+            ),
+            None,
         )
-        session.conversation_state = {
-            "conversationId": detail.upstream_id,
-            "parentMessageId": detail.current_node,
-            "lastUserMessageId": last_user,
-            "lastAssistantMessageId": last_assistant,
-            "model": detail.model,
-            "turnIndex": session.turn_index,
-            "loadedFromHistory": True,
-        }
+        last_assistant = next(
+            (
+                message.upstream_id
+                for message in reversed(detail.messages)
+                if message.role == "assistant"
+            ),
+            None,
+        )
+        with session.lock:
+            session.conversation_id = detail.upstream_id
+            session.parent_message_id = detail.current_node
+            session.model = detail.model
+            session.turn_index = sum(
+                1 for message in detail.messages if message.role == "user"
+            )
+            session.conversation_state = {
+                "conversationId": detail.upstream_id,
+                "parentMessageId": detail.current_node,
+                "lastUserMessageId": last_user,
+                "lastAssistantMessageId": last_assistant,
+                "model": detail.model,
+                "turnIndex": session.turn_index,
+                "loadedFromHistory": True,
+            }
+    except Exception:
+        session.close()
+        raise
     return session
 
 
@@ -2533,13 +2631,19 @@ async def conversation_history(
         offset = 0
 
     try:
-        async with AUTH_UPSTREAM_SEMAPHORE:
+        async with AUTH_HISTORY_SEMAPHORE:
             page = await asyncio.to_thread(
                 _history_read_with_refresh,
                 account_entry,
                 lambda credential: AUTH_HISTORY_BRIDGE.list_conversations(
                     credential, offset=offset, limit=limit
                 ),
+            )
+        if AUTH_REGISTRY.get(handle) is not account_entry:
+            raise AuthSessionError(
+                "authentication_expired",
+                "The local account session expired while loading conversation history.",
+                status_code=401,
             )
         bindings = [AUTH_HISTORY.bind(owner, summary) for summary in page.items]
         next_offset = page.offset + page.limit
@@ -2548,6 +2652,13 @@ async def conversation_history(
             if next_offset < page.total
             else None
         )
+        if AUTH_REGISTRY.get(handle) is not account_entry:
+            AUTH_HISTORY.remove_owner(owner)
+            raise AuthSessionError(
+                "authentication_expired",
+                "The local account session expired while loading conversation history.",
+                status_code=401,
+            )
     except AuthSessionError as error:
         if error.status_code == 401 and handle:
             _remove_account_state(handle)
@@ -2609,9 +2720,8 @@ async def conversation_history_detail(
             )
         )
 
-    session: AuthenticatedProtocolSession | None = None
     try:
-        async with AUTH_UPSTREAM_SEMAPHORE:
+        async with AUTH_HISTORY_SEMAPHORE:
             detail = await asyncio.to_thread(
                 _history_read_with_refresh,
                 account_entry,
@@ -2624,59 +2734,31 @@ async def conversation_history_detail(
                     project_id=binding.project_id,
                 ),
             )
-            session = await asyncio.to_thread(
-                _create_history_continuation, account_entry, detail
-            )
-        # Logout can race a slow upstream detail/bootstrap.  Check on both
-        # sides of registry insertion so no credential-bearing conversation is
-        # reintroduced after the auth cleanup callback has run.
+        # Logout can race a slow upstream detail read. Check on both sides of
+        # registry insertion so private upstream continuation pointers cannot
+        # be reintroduced after the auth cleanup callback has run.
         if AUTH_REGISTRY.get(handle) is not account_entry:
-            session.close()
-            session = None
             raise AuthSessionError(
                 "authentication_expired",
                 "The local account session expired while loading the conversation.",
                 status_code=401,
             )
-        continuation_id = AUTH_CONVERSATIONS.put(session, owner=owner)
+        continuation_id = AUTH_CONVERSATIONS.put_pending(detail, owner=owner)
         if AUTH_REGISTRY.get(handle) is not account_entry:
             AUTH_CONVERSATIONS.remove_owner(owner)
-            session = None
             raise AuthSessionError(
                 "authentication_expired",
                 "The local account session expired while loading the conversation.",
                 status_code=401,
             )
     except AuthSessionError as error:
-        if session is not None:
-            session.close()
         if error.status_code == 401 and handle:
             _remove_account_state(handle)
         response = _history_error(error)
         if error.status_code == 401 and handle:
             _expire_auth_cookie(response, request)
         return response
-    except AuthenticatedProtocolError as error:
-        if session is not None:
-            session.close()
-        status = (
-            error.upstream_status
-            if error.upstream_status in {401, 403, 429}
-            else 503
-            if error.code.endswith("_network_error")
-            else 502
-        )
-        if status == 401 and handle:
-            _remove_account_state(handle)
-        response = _history_error(
-            AuthSessionError(error.code, error.message, status_code=status)
-        )
-        if status == 401 and handle:
-            _expire_auth_cookie(response, request)
-        return response
     except Exception as error:
-        if session is not None:
-            session.close()
         LOGGER.error(
             "Unexpected conversation-history detail failure (%s)",
             type(error).__name__,
@@ -2895,6 +2977,7 @@ async def _guest_completion_sse(
 
 
 @app.post("/api/chat/completions", response_model=None)
+@app.post("/api/chat/authenticated/completions", response_model=None)
 async def chat_completions(
     http_request: Request,
     request: ChatCompletionRequest,
@@ -2933,6 +3016,9 @@ async def chat_completions(
     )
     local_handle = http_request.cookies.get(LOCAL_SESSION_COOKIE)
     local_account = AUTH_REGISTRY.get(local_handle)
+    require_authenticated = (
+        http_request.url.path == "/api/chat/authenticated/completions"
+    )
     if local_handle and local_account is None:
         response = _openai_error(
             401,
@@ -2945,6 +3031,16 @@ async def chat_completions(
         )
         _expire_auth_cookie(response, http_request)
         return response
+    if require_authenticated and local_account is None:
+        return _openai_error(
+            401,
+            ProtocolError(
+                "authentication_required",
+                "A verified account session is required for this chat endpoint.",
+                stage="authentication",
+                retryable=False,
+            ),
+        )
     if attachments and local_account is None:
         return _openai_error(
             403,

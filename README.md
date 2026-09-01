@@ -110,6 +110,17 @@ X-Conversation-Id: <续轮时使用响应头中的值>
 }
 ```
 
+登录界面使用严格的认证路由：
+
+```http
+POST /api/chat/authenticated/completions
+```
+
+该路由只接受有效的 `replica_account_session` HttpOnly Cookie；Cookie 缺失、过期或
+对应服务端会话已失效时返回 401，绝不会降级到 guest。成功响应必须携带
+`X-ChatGPT-Identity-Mode: verified-session`，前端也会验证该响应头。匿名界面继续使用
+兼容路由 `/api/chat/completions`。
+
 首轮响应会同时返回 `X-Conversation-Id` 和 `X-Chat-Conversation-Id`；续轮只需回传其一。会话映射只存在当前 bridge 进程内存中。
 
 ## 开发命令

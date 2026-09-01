@@ -38,6 +38,8 @@ export class ConversationHistoryError extends Error {
 
 type JsonRecord = Record<string, unknown>
 
+const HISTORY_NETWORK_ATTEMPTS = 2
+
 function asRecord(value: unknown): JsonRecord | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as JsonRecord
@@ -89,22 +91,47 @@ function errorFromResponse(payload: unknown, status: number) {
   return new ConversationHistoryError(message, status, code)
 }
 
+function waitForRetry(milliseconds: number, signal?: AbortSignal) {
+  if (signal?.aborted) return Promise.reject(signal.reason)
+  return new Promise<void>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, milliseconds)
+    const onAbort = () => {
+      globalThis.clearTimeout(timer)
+      reject(signal?.reason)
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 async function request(path: string, signal?: AbortSignal) {
-  let response: Response
-  try {
-    response = await fetch(path, {
-      cache: 'no-store',
-      credentials: 'include',
-      headers: { Accept: 'application/json' },
-      signal,
-    })
-  } catch (error) {
-    if (signal?.aborted) throw error
-    throw new ConversationHistoryError('无法连接本地聊天记录服务。')
+  for (let attempt = 0; attempt < HISTORY_NETWORK_ATTEMPTS; attempt += 1) {
+    let response: Response
+    try {
+      response = await fetch(path, {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        signal,
+      })
+    } catch (error) {
+      if (signal?.aborted) throw error
+      if (attempt + 1 >= HISTORY_NETWORK_ATTEMPTS) {
+        throw new ConversationHistoryError('无法连接本地聊天记录服务。')
+      }
+      await waitForRetry(100, signal)
+      continue
+    }
+    // The bridge already retries safe upstream GETs. Retrying its HTTP status
+    // again here would multiply requests (and can worsen a real 429). Only a
+    // browser-level network failure is replayed by this client.
+    const payload: unknown = await response.json().catch(() => null)
+    if (!response.ok) throw errorFromResponse(payload, response.status)
+    return payload
   }
-  const payload: unknown = await response.json().catch(() => null)
-  if (!response.ok) throw errorFromResponse(payload, response.status)
-  return payload
+  throw new ConversationHistoryError('无法连接本地聊天记录服务。')
 }
 
 export async function getConversationPage(
@@ -136,7 +163,21 @@ export async function getConversationHistory(signal?: AbortSignal) {
   // than the first sidebar viewport. The opaque server cursor remains private
   // to this fetch loop and is never stored in browser history.
   for (let pageIndex = 0; pageIndex < 5; pageIndex += 1) {
-    const page = await getConversationPage({ cursor, limit: 50 }, signal)
+    let page: ConversationPageDto
+    try {
+      page = await getConversationPage({ cursor, limit: 50 }, signal)
+    } catch (error) {
+      if (signal?.aborted || items.length === 0) throw error
+      // A later page is optional sidebar enrichment. Keep the already loaded
+      // first page after exhausted transient retries instead of replacing the
+      // entire authenticated history with an error state.
+      if (
+        !(error instanceof ConversationHistoryError)
+        || error.status === 401
+        || error.status === 403
+      ) throw error
+      break
+    }
     for (const item of page.items) {
       if (ids.has(item.id)) continue
       ids.add(item.id)

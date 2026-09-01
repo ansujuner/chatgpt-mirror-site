@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -23,7 +25,10 @@ from .authenticated_history import (
     HistoryPage,
     HistorySummary,
 )
-from .authenticated_protocol import AuthenticatedProtocolSession
+from .authenticated_protocol import (
+    AuthenticatedChatResult,
+    AuthenticatedProtocolSession,
+)
 
 
 class _Credential:
@@ -33,10 +38,17 @@ class _Credential:
 
 
 class _Response:
-    def __init__(self, status: int, payload: object) -> None:
+    def __init__(
+        self,
+        status: int,
+        payload: object,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status
         self._payload = payload
         self.content = json.dumps(payload).encode("utf-8")
+        self.headers = headers or {}
 
     def json(self):  # type: ignore[no-untyped-def]
         return self._payload
@@ -97,6 +109,25 @@ def _message(
 
 
 class AuthenticatedHistoryBridgeTests(unittest.TestCase):
+    def test_history_network_attempts_have_an_independent_default_and_override(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                AuthenticatedHistoryConfig.from_environment().network_attempts,
+                2,
+            )
+        with patch.dict(
+            os.environ,
+            {
+                "CHATGPT_AUTH_UPSTREAM_NETWORK_ATTEMPTS": "5",
+                "CHATGPT_AUTH_HISTORY_NETWORK_ATTEMPTS": "4",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                AuthenticatedHistoryConfig.from_environment().network_attempts,
+                4,
+            )
+
     def test_transient_network_failure_retries_history_get(self) -> None:
         http = _HTTP(
             [
@@ -129,6 +160,37 @@ class AuthenticatedHistoryBridgeTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 503)
         self.assertEqual(len(http.calls), 2)
         self.assertNotIn("secret", caught.exception.message)
+
+    def test_transient_http_status_retries_idempotent_history_get(self) -> None:
+        http = _HTTP(
+            [
+                _Response(503, {"error": "temporary"}),
+                _Response(200, {"items": [], "total": 0, "limit": 28, "offset": 0}),
+            ]
+        )
+        bridge = AuthenticatedHistoryBridge(_config(), http_factory=lambda: http)
+
+        with patch("server.authenticated_history.time.sleep") as sleep:
+            page = bridge.list_conversations(_Credential())
+
+        self.assertEqual(page.total, 0)
+        self.assertEqual(len(http.calls), 2)
+        sleep.assert_called_once_with(0.2)
+
+    def test_rate_limit_is_not_automatically_retried(self) -> None:
+        http = _HTTP([_Response(429, {}, headers={"Retry-After": "120"})])
+        bridge = AuthenticatedHistoryBridge(_config(), http_factory=lambda: http)
+
+        with (
+            patch("server.authenticated_history.time.sleep") as sleep,
+            self.assertRaises(AuthSessionError) as caught,
+        ):
+            bridge.list_conversations(_Credential())
+
+        self.assertEqual(caught.exception.code, "history_rate_limited")
+        self.assertEqual(caught.exception.status_code, 429)
+        self.assertEqual(len(http.calls), 1)
+        sleep.assert_not_called()
 
     def test_list_uses_official_query_and_returns_only_whitelisted_fields(self) -> None:
         http = _HTTP(
@@ -267,6 +329,86 @@ class AuthenticatedHistoryBridgeTests(unittest.TestCase):
             ["first", "answer one", "second", "answer two"],
         )
 
+    def test_transient_older_page_failure_keeps_recent_history(self) -> None:
+        first = {
+            "title": "Recent page survives",
+            "current_node": "a2",
+            "messages": [
+                _message("u2", "user", "second", None, 30),
+                _message("a2", "assistant", "answer two", "u2", 40),
+            ],
+            "page_info": {"has_previous_page": True, "start_cursor": "older"},
+        }
+        http = _HTTP(
+            [
+                _Response(200, first),
+                _Response(503, {}),
+                _Response(503, {}),
+                _Response(503, {}),
+            ]
+        )
+        bridge = AuthenticatedHistoryBridge(_config(), http_factory=lambda: http)
+
+        with patch("server.authenticated_history.time.sleep"):
+            detail = bridge.get_conversation(_Credential(), "conversation-partial")
+
+        self.assertEqual(
+            [message.content for message in detail.messages],
+            ["second", "answer two"],
+        )
+        self.assertEqual(len(http.calls), 4)
+
+    def test_repeated_older_page_cursor_keeps_loaded_messages(self) -> None:
+        first = {
+            "title": "Repeated cursor",
+            "current_node": "a2",
+            "messages": [_message("a2", "assistant", "newest", None, 40)],
+            "page_info": {"has_previous_page": True, "start_cursor": "same"},
+        }
+        older = {
+            "messages": [_message("u1", "user", "older", None, 10)],
+            "page_info": {"has_previous_page": True, "start_cursor": "same"},
+        }
+        http = _HTTP([_Response(200, first), _Response(200, older)])
+        bridge = AuthenticatedHistoryBridge(_config(), http_factory=lambda: http)
+
+        detail = bridge.get_conversation(_Credential(), "conversation-loop")
+
+        self.assertEqual(
+            [message.content for message in detail.messages],
+            ["older", "newest"],
+        )
+        self.assertEqual(len(http.calls), 2)
+
+    def test_message_limit_truncates_to_recent_history_instead_of_failing(self) -> None:
+        first = {
+            "title": "Long conversation",
+            "current_node": "a3",
+            "messages": [
+                _message("u3", "user", "recent user", None, 30),
+                _message("a3", "assistant", "recent answer", "u3", 40),
+            ],
+            "page_info": {"has_previous_page": True, "start_cursor": "older"},
+        }
+        older = {
+            "messages": [
+                _message("u1", "user", "old user", None, 10),
+                _message("a1", "assistant", "old answer", "u1", 20),
+            ],
+            "page_info": {"has_previous_page": False},
+        }
+        http = _HTTP([_Response(200, first), _Response(200, older)])
+        bridge = AuthenticatedHistoryBridge(
+            _config(max_messages=3), http_factory=lambda: http
+        )
+
+        detail = bridge.get_conversation(_Credential(), "conversation-long")
+
+        self.assertEqual(
+            [message.content for message in detail.messages],
+            ["old answer", "recent user", "recent answer"],
+        )
+
     def test_paginated_flat_order_ignores_partial_assistant_parent_chain(self) -> None:
         """A partial parent chain must not discard the preceding user prompt.
 
@@ -336,6 +478,30 @@ class AuthenticatedHistoryBridgeTests(unittest.TestCase):
             http.calls[1]["params"], {"include_full_conversation": "true"}
         )
 
+    def test_legacy_mapping_recovers_from_incompatible_paginated_shape(self) -> None:
+        legacy = {
+            "title": "Legacy shape",
+            "current_node": "assistant-1",
+            "mapping": {
+                "assistant-1": {
+                    "parent": None,
+                    "message": _message(
+                        "assistant-1", "assistant", "recovered", None, 2
+                    ),
+                },
+            },
+        }
+        http = _HTTP([_Response(200, {"mapping": {}}), _Response(200, legacy)])
+        bridge = AuthenticatedHistoryBridge(_config(), http_factory=lambda: http)
+
+        detail = bridge.get_conversation(_Credential(), "conversation-legacy-shape")
+
+        self.assertEqual([message.content for message in detail.messages], ["recovered"])
+        self.assertIn(
+            "/backend-api/conversation/conversation-legacy-shape",
+            http.calls[1]["url"],
+        )
+
     def test_403_is_preserved_and_response_body_is_never_reflected(self) -> None:
         http = _HTTP([_Response(403, {"access_token": "leak-me"})])
         bridge = AuthenticatedHistoryBridge(_config(), http_factory=lambda: http)
@@ -367,6 +533,136 @@ class AuthenticatedHistoryRegistryTests(unittest.TestCase):
         registry.remove_owner("owner-a")
         self.assertIsNone(registry.resolve("owner-a", binding.local_id))
         self.assertIsNone(registry.resolve_cursor("owner-a", cursor))
+
+
+class PendingAuthenticatedConversationTests(unittest.TestCase):
+    class Session:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    @staticmethod
+    def detail() -> HistoryDetail:
+        return HistoryDetail(
+            upstream_id="private-conversation",
+            title="Pending",
+            created_at=None,
+            updated_at=None,
+            current_node="private-node",
+            model="gpt-5-6-thinking",
+            messages=(),
+        )
+
+    def test_pending_resolution_is_owner_scoped_and_retries_after_failure(self) -> None:
+        registry = application.AuthenticatedConversationRegistry(300, 4)
+        local_id = registry.put_pending(self.detail(), owner="account:a")
+        factory_calls = 0
+
+        def fail_once(_detail):  # type: ignore[no-untyped-def]
+            nonlocal factory_calls
+            factory_calls += 1
+            raise RuntimeError("bootstrap failed")
+
+        self.assertIsNone(
+            registry.get_or_resolve(
+                local_id,
+                owner="account:b",
+                factory=lambda _: self.Session(),  # type: ignore[arg-type]
+            )
+        )
+        with self.assertRaisesRegex(RuntimeError, "bootstrap failed"):
+            registry.get_or_resolve(
+                local_id,
+                owner="account:a",
+                factory=fail_once,
+            )
+
+        session = self.Session()
+        resolved = registry.get_or_resolve(
+            local_id,
+            owner="account:a",
+            factory=lambda _: session,  # type: ignore[arg-type]
+        )
+        self.assertIs(resolved, session)
+        self.assertEqual(factory_calls, 1)
+        registry.remove_owner("account:a")
+        self.assertTrue(session.closed)
+        self.assertEqual(registry.count(), 0)
+
+    def test_concurrent_first_turn_bootstraps_pending_entry_once(self) -> None:
+        registry = application.AuthenticatedConversationRegistry(300, 4)
+        local_id = registry.put_pending(self.detail(), owner="account:a")
+        started = threading.Event()
+        release = threading.Event()
+        session = self.Session()
+        factory_calls = 0
+        results: list[object | None] = []
+
+        def factory(_detail):  # type: ignore[no-untyped-def]
+            nonlocal factory_calls
+            factory_calls += 1
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return session
+
+        def resolve() -> None:
+            results.append(
+                registry.get_or_resolve(
+                    local_id,
+                    owner="account:a",
+                    factory=factory,
+                )
+            )
+
+        first = threading.Thread(target=resolve)
+        second = threading.Thread(target=resolve)
+        first.start()
+        self.assertTrue(started.wait(timeout=2))
+        second.start()
+        release.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(factory_calls, 1)
+        self.assertEqual(results, [session, session])
+        registry.close_all()
+
+    def test_logout_during_lazy_bootstrap_closes_orphan_session(self) -> None:
+        registry = application.AuthenticatedConversationRegistry(300, 4)
+        local_id = registry.put_pending(self.detail(), owner="account:a")
+        started = threading.Event()
+        release = threading.Event()
+        session = self.Session()
+        results: list[object | None] = []
+
+        def factory(_detail):  # type: ignore[no-untyped-def]
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return session
+
+        worker = threading.Thread(
+            target=lambda: results.append(
+                registry.get_or_resolve(
+                    local_id,
+                    owner="account:a",
+                    factory=factory,
+                )
+            )
+        )
+        worker.start()
+        self.assertTrue(started.wait(timeout=2))
+        registry.remove_owner("account:a")
+        release.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results, [None])
+        self.assertTrue(session.closed)
+        self.assertEqual(registry.count(), 0)
 
 
 def _request(handle: str | None, path: str) -> Request:
@@ -461,19 +757,9 @@ class AuthenticatedHistoryAppTests(unittest.TestCase):
                 HistoryMessage("upstream-message-2", "assistant", "world", None),
             ),
         )
-        protocol_session = AuthenticatedProtocolSession(
-            http=_HTTP(),
-            access_token="token-secret",
-            cookie_header="session=cookie-secret",
-            account_id="account-a",
-        )
         with (
             patch.object(application, "_history_read_with_refresh", return_value=detail),
-            patch.object(
-                application,
-                "_create_history_continuation",
-                return_value=protocol_session,
-            ),
+            patch.object(application, "_create_history_continuation") as bootstrap,
         ):
             response = asyncio.run(
                 application.conversation_history_detail(
@@ -481,6 +767,7 @@ class AuthenticatedHistoryAppTests(unittest.TestCase):
                     _request(handle, f"/api/conversations/{local_id}"),
                 )
             )
+        bootstrap.assert_not_called()
         self.assertEqual(response.status_code, 200)
         detail_body = json.loads(response.body)
         self.assertEqual(detail_body["conversation"]["id"], local_id)
@@ -497,6 +784,60 @@ class AuthenticatedHistoryAppTests(unittest.TestCase):
         ):
             self.assertNotIn(secret, serialized)
 
+        protocol_session = AuthenticatedProtocolSession(
+            http=_HTTP(),
+            access_token="token-secret",
+            cookie_header="session=cookie-secret",
+            account_id="account-a",
+        )
+        chat_result = AuthenticatedChatResult(
+            answer="continued",
+            conversation_id="upstream-conversation-secret",
+            conversation_state={"parentMessageId": "next-node"},
+            parent_message_id="next-node",
+            assistant_message_id="next-assistant",
+            upstream_request_id=None,
+            attempts=1,
+            model="gpt-5-6-thinking",
+        )
+        owner = application.AUTH_REGISTRY.owner_key(handle)
+        continuation_id = detail_body["continuationId"]
+        with (
+            patch.object(
+                application,
+                "_create_history_continuation",
+                return_value=protocol_session,
+            ) as bootstrap,
+            patch.object(application.AUTH_BRIDGE, "run_turn", return_value=chat_result),
+        ):
+            first_id, first_session, first_result = application._execute_authenticated_chat(
+                "continue",
+                (),
+                continuation_id,
+                owner,
+                application.AUTH_REGISTRY.get(handle),
+                model="gpt-5-6-thinking",
+                reasoning_effort="high",
+                service_tier=None,
+            )
+            second_id, second_session, _ = application._execute_authenticated_chat(
+                "continue again",
+                (),
+                continuation_id,
+                owner,
+                application.AUTH_REGISTRY.get(handle),
+                model="gpt-5-6-thinking",
+                reasoning_effort="high",
+                service_tier=None,
+            )
+
+        bootstrap.assert_called_once_with(application.AUTH_REGISTRY.get(handle), detail)
+        self.assertEqual(first_id, continuation_id)
+        self.assertEqual(second_id, continuation_id)
+        self.assertIs(first_session, protocol_session)
+        self.assertIs(second_session, protocol_session)
+        self.assertEqual(first_result.answer, "continued")
+
     def test_forbidden_history_does_not_destroy_healthy_login(self) -> None:
         handle, entry = _login()
         forbidden = AuthSessionError(
@@ -512,6 +853,35 @@ class AuthenticatedHistoryAppTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 403)
         self.assertIs(application.AUTH_REGISTRY.get(handle), entry)
+
+    def test_slow_list_cannot_reinsert_bindings_after_logout(self) -> None:
+        handle, _ = _login()
+        page = HistoryPage(
+            items=(HistorySummary("private-upstream", "Late", None, None),),
+            offset=0,
+            limit=28,
+            total=1,
+        )
+
+        def finish_after_logout(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+            application.AUTH_REGISTRY.delete(handle)
+            return page
+
+        with patch.object(
+            application,
+            "_history_read_with_refresh",
+            side_effect=finish_after_logout,
+        ):
+            response = asyncio.run(
+                application.conversation_history(
+                    _request(handle, "/api/conversations"), cursor=None, limit=28
+                )
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Max-Age=0", response.headers.get("set-cookie", ""))
+        self.assertEqual(application.AUTH_HISTORY.count(), 0)
+        self.assertNotIn("private-upstream", response.body.decode())
 
     def test_history_read_refreshes_once_after_401(self) -> None:
         _, entry = _login()
