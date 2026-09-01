@@ -6,7 +6,7 @@
 
 GitHub Pages 只能发布静态 HTML、CSS 和 JavaScript，不能运行本项目的 Python 后端。完整托管采用 **GitHub 保存源码并运行 CI + Hostless 从该 GitHub 仓库自动部署单容器**：Caddy、React 前端和 Python API 共用一个 HTTPS 域名，所有浏览器接口继续使用同源 `/api/*`。
 
-仓库根目录的 `hostless.yaml` 会使用现有 `Dockerfile`，固定一个 `1 vCPU / 1 GiB` 副本，并通过 `/api/health/ready` 检查服务。登录 [Hostless](https://www.hostless.cloud/apps) 后连接 `ansujuner/chatgpt-mirror-site` 的 `main` 分支即可部署。不要为这个应用创建额外 worker 或数据库，否则会占用账号共享的免费 CPU / 内存额度。
+仓库根目录的 `hostless.yaml` 会使用现有 `Dockerfile`，把运行资源留给 Hostless 免费档默认值，并通过 `/api/health/live` 做滚动部署存活检查；更严格的 `/api/health/ready` 仍用于部署后的依赖验证。登录 [Hostless](https://www.hostless.cloud/apps) 后连接 `ansujuner/chatgpt-mirror-site` 的 `main` 分支即可部署。不要为这个应用创建额外 worker 或数据库，否则会占用账号共享的免费 CPU / 内存额度。
 
 Hostless 服务会在同一个 HTTPS Origin 提供前端和 `/api/*`，因此 Session 登录、HttpOnly Cookie、Codex 额度及设置接口可以按生产边界工作。容器重启或重新部署仍会清空仅存于进程内存的 Session，需要重新登录；应用临时盘也不能作为设置数据的永久存储。
 

@@ -68,8 +68,8 @@ npm run dev:lan
 - 使用 Node 24 构建 Vite 前端。
 - 在运行时保留 Node 24 和 Python 3.11，满足 bridge 的协议运行依赖。
 - 由 Caddy 在平台注入的 `PORT` 上提供 `dist/`，并把 `/api/*` 转发到容器内仅监听回环地址的单 worker Python bridge。
-- 固定一个 `1 vCPU / 1 GiB` 副本，避免进程内 Session、Cookie jar 和会话映射被分散到不同实例。
-- 使用 `/api/health/ready` 做 HTTP 健康检查。
+- 在 Hostless 控制台固定单副本，并把 CPU / 内存保持在账号共享免费额度内，避免进程内 Session、Cookie jar 和会话映射被分散到不同实例。
+- 使用 `/api/health/live` 做平台滚动部署的 HTTP 存活检查；上线后再用 `/api/health/ready` 验证本地运行依赖。
 
 在 [Hostless](https://www.hostless.cloud/apps) 使用 GitHub 登录，创建 App 时选择：
 
