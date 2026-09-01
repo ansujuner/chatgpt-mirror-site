@@ -315,9 +315,12 @@ def _safe_code(value: Any, fallback: str) -> str:
 
 def _status_error(response: Any, stage: str) -> AuthenticatedProtocolError:
     status = int(getattr(response, "status_code", 0) or 0)
-    if status in {401, 403}:
+    if status == 401:
         code = "authenticated_session_expired"
-        message = "The authenticated ChatGPT session expired or was rejected."
+        message = "The authenticated ChatGPT session expired."
+    elif status == 403:
+        code = "authenticated_forbidden"
+        message = "The authenticated ChatGPT account cannot use this feature."
     elif status == 429:
         code = "authenticated_rate_limited"
         message = "The authenticated ChatGPT account is currently rate limited."
@@ -328,7 +331,7 @@ def _status_error(response: Any, stage: str) -> AuthenticatedProtocolError:
         code,
         message,
         stage=stage,
-        retryable=status >= 409 or status in {401, 403},
+        retryable=status >= 409 or status == 401,
         upstream_status=status or None,
         upstream_request_id=_request_id(response),
     )

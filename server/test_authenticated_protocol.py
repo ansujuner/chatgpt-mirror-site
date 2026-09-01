@@ -164,6 +164,15 @@ class _FlakyHTTP(_FakeHTTP):
 
 
 class AuthenticatedStreamParserTests(unittest.TestCase):
+    def test_forbidden_status_is_not_mislabeled_as_an_expired_session(self) -> None:
+        response = _FakeResponse(status=403, payload={"error": "plan gated"})
+
+        error = authenticated_protocol._status_error(response, "conversation_prepare")
+
+        self.assertEqual(error.code, "authenticated_forbidden")
+        self.assertEqual(error.upstream_status, 403)
+        self.assertFalse(error.retryable)
+
     def test_v1_compact_deltas_reconstruct_answer_and_state(self) -> None:
         parsed = parse_authenticated_sse(
             _v1_fixture("Hello", "assistant-1", "conversation-1")

@@ -4,6 +4,7 @@ import json
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -430,7 +431,7 @@ class AccountBindingTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "usage_forbidden")
         self.assertEqual(caught.exception.status_code, 403)
 
-    def test_request_json_keeps_non_usage_forbidden_as_invalid_session(self) -> None:
+    def test_request_json_keeps_non_usage_forbidden_separate_from_authentication(self) -> None:
         class ForbiddenResponse:
             status_code = 403
 
@@ -444,12 +445,64 @@ class AccountBindingTests(unittest.TestCase):
                 auth_session.SESSION_ENDPOINT,
                 headers={},
                 stage="session",
-                # Even an accidental opt-in must not change login semantics.
+                # Even an accidental opt-in must not label this as Codex usage.
                 preserve_forbidden=True,
             )
 
-        self.assertEqual(caught.exception.code, "invalid_session")
-        self.assertEqual(caught.exception.status_code, 401)
+        self.assertEqual(caught.exception.code, "upstream_forbidden")
+        self.assertEqual(caught.exception.status_code, 403)
+
+    def test_bearer_only_credential_is_used_until_its_actual_expiry(self) -> None:
+        entry = _entry(cookie=False)
+        entry.credential = replace(
+            entry.credential, access_token_expires_at_epoch=time.time() + 45
+        )
+
+        with patch.object(auth_session, "refresh_local_auth_entry") as refresh:
+            current = auth_session.ensure_fresh_credential(
+                entry, minimum_validity_seconds=300
+            )
+
+        self.assertIs(current, entry.credential)
+        refresh.assert_not_called()
+
+    def test_refreshable_credential_still_rotates_inside_safety_window(self) -> None:
+        entry = _entry(cookie=True)
+        entry.credential = replace(
+            entry.credential, access_token_expires_at_epoch=time.time() + 45
+        )
+        replacement = _credential(cookie=True)
+
+        with patch.object(
+            auth_session, "refresh_local_auth_entry", return_value=replacement
+        ) as refresh:
+            current = auth_session.ensure_fresh_credential(
+                entry, minimum_validity_seconds=300
+            )
+
+        self.assertIs(current, replacement)
+        refresh.assert_called_once_with(entry)
+
+    def test_runtime_accounts_forbidden_is_optional_and_does_not_refresh(self) -> None:
+        entry = _entry(plan="plus")
+
+        def request_json(_http, _url, *, stage, **_kwargs):  # type: ignore[no-untyped-def]
+            if stage == "accounts_runtime":
+                raise AuthSessionError(
+                    "upstream_forbidden", "feature denied", status_code=403
+                )
+            return {}
+
+        with (
+            patch.object(auth_session, "_new_http_session", return_value=_HTTP()),
+            patch.object(auth_session, "_request_json", side_effect=request_json),
+            patch.object(auth_session, "refresh_local_auth_entry") as refresh,
+        ):
+            runtime = auth_session.fetch_account_runtime(entry, cache_ttl_seconds=0)
+
+        self.assertEqual(runtime["plan"], "plus")
+        self.assertEqual(runtime["features"], [])
+        refresh.assert_not_called()
 
     def test_request_json_retries_transient_network_failures_for_safe_reads(self) -> None:
         class SuccessResponse:

@@ -527,6 +527,22 @@ class AuthenticatedApplicationTests(unittest.TestCase):
     def tearDown(self) -> None:
         application._remove_account_state(self.handle)
 
+    def test_runtime_forbidden_preserves_verified_local_login(self) -> None:
+        with patch.object(
+            application,
+            "fetch_account_runtime",
+            side_effect=AuthSessionError(
+                "upstream_forbidden", "feature denied", status_code=403
+            ),
+        ):
+            response = asyncio.run(
+                application.account_runtime(_usage_request(self.handle))
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn("set-cookie", response.headers)
+        self.assertIs(application.AUTH_REGISTRY.get(self.handle), self.entry)
+
     def test_authenticated_chat_forwards_plan_controls_and_hides_upstream_id(self) -> None:
         result = AuthenticatedChatResult(
             answer="authenticated answer",
@@ -1123,7 +1139,7 @@ class AuthenticatedApplicationTests(unittest.TestCase):
             application,
             "_execute_authenticated_chat",
             side_effect=AuthenticatedProtocolError(
-                "authenticated_session_expired",
+                "authenticated_forbidden",
                 "forbidden upstream",
                 stage="conversation_prepare",
                 retryable=False,

@@ -319,16 +319,25 @@ def _request_json(
 
     status = int(response.status_code)
     preserve_usage_forbidden = preserve_forbidden and stage.startswith("codex_")
-    if status == 401 or (status == 403 and not preserve_usage_forbidden):
+    if status == 401:
+        LOGGER.info("Upstream session request returned HTTP 401 at %s", stage)
         raise AuthSessionError(
             "invalid_session",
             "Session 无效或已过期，请重新复制后再试。",
             status_code=401,
         )
     if status == 403:
+        # `/backend-api/me` is the decisive bearer check. Other upstream
+        # endpoints may independently deny a plan/feature, which must not be
+        # converted into a fake authentication failure and destructive logout.
+        LOGGER.info("Upstream session request returned HTTP 403 at %s", stage)
         raise AuthSessionError(
-            "usage_forbidden",
-            "当前账号无权访问 Codex 用量信息。",
+            "usage_forbidden" if preserve_usage_forbidden else "upstream_forbidden",
+            (
+                "当前账号无权访问 Codex 用量信息。"
+                if preserve_usage_forbidden
+                else "当前账号无权访问该上游功能。"
+            ),
             status_code=403,
         )
     if status == 429:
@@ -1088,7 +1097,14 @@ def ensure_fresh_credential(
 ) -> UpstreamCredential:
     credential = entry.credential
     expiry = credential.access_token_expires_at_epoch
-    if expiry is None or expiry > time.time() + minimum_validity_seconds:
+    now = time.time()
+    if expiry is None or expiry > now + minimum_validity_seconds:
+        return credential
+    # Session JSON / bearer-only logins have no refresh grant. A proactive
+    # safety window must not turn a still-valid token into an immediate local
+    # logout. Use it until its actual expiry; an authoritative upstream 401
+    # will close the local account session then.
+    if expiry > now and not credential.cookie_header and not credential.refresh_token:
         return credential
     return refresh_local_auth_entry(entry)
 

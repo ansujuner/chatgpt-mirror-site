@@ -1511,10 +1511,12 @@ async def account_runtime(request: Request) -> JSONResponse:
         async with AUTH_UPSTREAM_SEMAPHORE:
             runtime = await asyncio.to_thread(fetch_account_runtime, entry)
     except AuthSessionError as error:
-        if error.status_code in {401, 403} and handle:
+        # A 403 is an entitlement/feature denial, not proof that the verified
+        # account identity is invalid. Preserve the local login.
+        if error.status_code == 401 and handle:
             _remove_account_state(handle)
         response = _auth_error(error)
-        if error.status_code in {401, 403}:
+        if error.status_code == 401:
             _expire_auth_cookie(response, request)
         return response
     except Exception:
