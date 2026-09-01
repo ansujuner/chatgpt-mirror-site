@@ -94,10 +94,24 @@ class _FakeResponse:
 
 
 class _FakeHTTP:
-    def __init__(self, *, reject_first_token: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        reject_first_token: bool = False,
+        tokenless_prepare: bool = False,
+        handoff_initial: bool = False,
+        handoff_resume: bool = False,
+        handoff_header_token: str | None = None,
+        resume_status: int = 200,
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.turn = 0
         self.reject_first_token = reject_first_token
+        self.tokenless_prepare = tokenless_prepare
+        self.handoff_initial = handoff_initial
+        self.handoff_resume = handoff_resume
+        self.handoff_header_token = handoff_header_token
+        self.resume_status = resume_status
         self.closed = False
 
     def request(self, method: str, url: str, **kwargs: Any) -> _FakeResponse:
@@ -123,8 +137,42 @@ class _FakeHTTP:
         if url.endswith("/sentinel/chat-requirements/finalize"):
             return _FakeResponse(payload={"token": "sentinel-final", "expire_after": 60})
         if url.endswith("/f/conversation/prepare"):
+            if self.tokenless_prepare:
+                return _FakeResponse(payload={"status": "ok"})
             return _FakeResponse(payload={"status": "success", "conduit_token": "cnd"})
         if url.endswith("/f/conversation/resume"):
+            if self.resume_status != 200:
+                return _FakeResponse(
+                    status=self.resume_status,
+                    payload={"error": "resume unavailable"},
+                    headers={"x-oai-request-id": "resume-rejected-1"},
+                )
+            if self.handoff_resume:
+                lines = _sse_event(
+                    None,
+                    {
+                        "type": "stream_handoff",
+                        "conversation_id": "conversation-1",
+                        "options": [
+                            {
+                                "type": "subscribe_ws_topic",
+                                "topic_id": "conversation-turn-topic-2",
+                            }
+                        ],
+                    },
+                )
+                lines += _sse_event(None, "[DONE]")
+                return _FakeResponse(
+                    lines=lines,
+                    headers={"x-oai-request-id": "resume-handoff-1"},
+                )
+            if self.handoff_initial:
+                return _FakeResponse(
+                    lines=_v1_fixture(
+                        "answer-resumed", "assistant-resumed", "conversation-1"
+                    ),
+                    headers={"x-oai-request-id": "resume-answer-1"},
+                )
             lines = _sse_event(
                 None,
                 {
@@ -151,6 +199,32 @@ class _FakeHTTP:
             return _FakeResponse(lines=lines, headers={"x-oai-request-id": "resume-1"})
         if url.endswith("/f/conversation"):
             self.turn += 1
+            if self.handoff_initial:
+                lines = _sse_event(
+                    None,
+                    {
+                        "type": "stream_handoff",
+                        "conversation_id": "conversation-1",
+                        "options": [
+                            {
+                                "type": "subscribe_ws_topic",
+                                "topic_id": "conversation-turn-topic-1",
+                            }
+                        ],
+                    },
+                )
+                lines += _sse_event(None, "[DONE]")
+                return _FakeResponse(
+                    lines=lines,
+                    headers={
+                        "x-oai-request-id": "submit-handoff-1",
+                        **(
+                            {"X-Conduit-Token": self.handoff_header_token}
+                            if self.handoff_header_token
+                            else {}
+                        ),
+                    },
+                )
             return _FakeResponse(
                 lines=_v1_fixture(
                     f"answer-{self.turn}", f"assistant-{self.turn}", "conversation-1"
@@ -570,6 +644,204 @@ class AuthenticatedBridgeTests(unittest.TestCase):
         self.assertEqual(submit["json"]["system_hints"], ["picture_v2"])
         self.assertNotIn("thinking_effort", prepare["json"])
         self.assertNotIn("thinking_effort", submit["json"])
+
+    def test_successful_prepare_without_conduit_submits_without_header(self) -> None:
+        """A 2xx prepare response may legitimately omit its optional token."""
+
+        fake = _FakeHTTP(tokenless_prepare=True)
+        bridge = self._bridge(fake, attempts=2)
+        session = bridge.create_session({"access_token": "valid-token"})
+
+        result = bridge.run_turn(
+            session,
+            "generate an image",
+            system_hints=("picture_v2",),
+        )
+
+        self.assertEqual(result.answer, "answer-1")
+        prepare_calls = [
+            call
+            for call in fake.calls
+            if call["url"].endswith("/f/conversation/prepare")
+        ]
+        submit_calls = [
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        ]
+        self.assertEqual(len(prepare_calls), 1)
+        self.assertEqual(len(submit_calls), 1)
+        self.assertEqual(submit_calls[0]["json"]["client_prepare_state"], "success")
+        self.assertNotIn("x-conduit-token", submit_calls[0]["headers"])
+
+    def test_handoff_only_submit_uses_tokenless_resume_without_replay(self) -> None:
+        fake = _FakeHTTP(handoff_initial=True)
+        bridge = self._bridge(fake, attempts=3)
+        session = bridge.create_session({"access_token": "valid-token"})
+
+        result = bridge.run_turn(session, "continue over the handoff")
+
+        self.assertEqual(result.answer, "answer-resumed")
+        submit_calls = [
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        ]
+        resume_calls = [
+            call
+            for call in fake.calls
+            if call["url"].endswith("/f/conversation/resume")
+        ]
+        self.assertEqual(len(submit_calls), 1)
+        self.assertEqual(len(resume_calls), 1)
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(
+            resume_calls[0]["json"],
+            {"conversation_id": "conversation-1", "offset": 0},
+        )
+        self.assertNotIn("x-conduit-token", resume_calls[0]["headers"])
+        self.assertEqual(
+            resume_calls[0]["headers"]["x-oai-turn-trace-id"],
+            submit_calls[0]["headers"]["x-oai-turn-trace-id"],
+        )
+        self.assertEqual(result.upstream_request_id, "resume-answer-1")
+
+    def test_submit_response_conduit_header_is_used_only_for_resume(self) -> None:
+        fake = _FakeHTTP(
+            handoff_initial=True,
+            handoff_header_token="private-header-resume-token",
+        )
+        bridge = self._bridge(fake, attempts=3)
+        session = bridge.create_session({"access_token": "valid-token"})
+
+        result = bridge.run_turn(session, "continue using response header")
+
+        submit = next(
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        )
+        resume = next(
+            call
+            for call in fake.calls
+            if call["url"].endswith("/f/conversation/resume")
+        )
+        self.assertEqual(result.answer, "answer-resumed")
+        self.assertEqual(
+            resume["headers"]["x-conduit-token"],
+            "private-header-resume-token",
+        )
+        self.assertNotIn("private-header-resume-token", str(submit))
+
+    def test_picture_handoff_resume_rejection_falls_back_to_history_polling(self) -> None:
+        fake = _FakeHTTP(handoff_initial=True, resume_status=404)
+        bridge = self._bridge(fake, attempts=3)
+        session = bridge.create_session({"access_token": "valid-token"})
+
+        result = bridge.run_turn(
+            session,
+            "generate a picture",
+            system_hints=("picture_v2",),
+        )
+
+        submit_calls = [
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        ]
+        resume_calls = [
+            call
+            for call in fake.calls
+            if call["url"].endswith("/f/conversation/resume")
+        ]
+        self.assertEqual(len(submit_calls), 1)
+        self.assertEqual(len(resume_calls), 1)
+        self.assertTrue(result.image_generation_pending)
+        self.assertEqual(result.conversation_id, "conversation-1")
+        self.assertEqual(result.attempts, 1)
+        self.assertFalse(result.conversation_state["streamComplete"])
+
+    def test_handoff_resume_retries_network_without_replaying_submit(self) -> None:
+        fake = _FlakyHTTP(
+            failure_method="POST",
+            failure_suffix="/f/conversation/resume",
+        )
+        fake.handoff_initial = True
+        bridge = self._bridge(fake, attempts=3)
+        session = bridge.create_session({"access_token": "valid-token"})
+
+        with patch.object(authenticated_protocol.time, "sleep") as sleep:
+            result = bridge.run_turn(session, "continue after a resume disconnect")
+
+        submit_calls = [
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        ]
+        resume_calls = [
+            call
+            for call in fake.calls
+            if call["url"].endswith("/f/conversation/resume")
+        ]
+        self.assertEqual(result.answer, "answer-resumed")
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(len(submit_calls), 1)
+        self.assertEqual(len(resume_calls), 2)
+        sleep.assert_called_once()
+
+    def test_repeated_handoff_returns_pollable_state_without_submit_replay(self) -> None:
+        fake = _FakeHTTP(handoff_initial=True, handoff_resume=True)
+        bridge = self._bridge(fake, attempts=3)
+        session = bridge.create_session({"access_token": "valid-token"})
+
+        result = bridge.run_turn(session, "continue over repeated handoff")
+
+        submit_calls = [
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        ]
+        resume_calls = [
+            call
+            for call in fake.calls
+            if call["url"].endswith("/f/conversation/resume")
+        ]
+        self.assertEqual(result.answer, "")
+        self.assertTrue(result.conversation_state["transportHandoffPending"])
+        self.assertFalse(result.conversation_state["streamComplete"])
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(len(submit_calls), 1)
+        self.assertEqual(len(resume_calls), 1)
+
+    def test_post_commit_stream_auth_error_does_not_refresh_or_replay(self) -> None:
+        class StreamUnauthorizedHTTP(_FakeHTTP):
+            def request(self, method: str, url: str, **kwargs: Any) -> _FakeResponse:
+                if url.endswith("/f/conversation"):
+                    self.turn += 1
+                    self.calls.append({"method": method, "url": url, **kwargs})
+                    return _FakeResponse(
+                        lines=_sse_event(
+                            None,
+                            {
+                                "error": {
+                                    "code": "session_expired_in_stream",
+                                    "status_code": 401,
+                                }
+                            },
+                        ),
+                        headers={"x-oai-request-id": "committed-stream-1"},
+                    )
+                return super().request(method, url, **kwargs)
+
+        fake = StreamUnauthorizedHTTP()
+        bridge = self._bridge(fake, attempts=3)
+        refresh_calls: list[str] = []
+        session = bridge.create_session(
+            {"access_token": "valid-token", "account_id": "account-1"},
+            token_refresh_hook=lambda current: refresh_calls.append(current.account_id)
+            or "refreshed-token",
+        )
+
+        with self.assertRaises(AuthenticatedProtocolError) as caught:
+            bridge.run_turn(session, "do not duplicate this committed turn")
+
+        submit_calls = [
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        ]
+        self.assertEqual(caught.exception.code, "session_expired_in_stream")
+        self.assertEqual(caught.exception.stage, "conversation_stream")
+        self.assertEqual(caught.exception.upstream_status, 401)
+        self.assertIn("after 1 attempt(s)", caught.exception.message)
+        self.assertEqual(refresh_calls, [])
+        self.assertEqual(len(submit_calls), 1)
 
     def test_resume_turn_uses_conduit_token_without_resubmitting_prompt(self) -> None:
         fake = _FakeHTTP()

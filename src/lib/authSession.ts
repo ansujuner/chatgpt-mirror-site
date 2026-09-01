@@ -39,6 +39,7 @@ export type RuntimeModel = {
   reasoningType: string
   configurableThinkingEffort: boolean
   thinkingEfforts: RuntimeThinkingEffort[]
+  defaultThinkingEffort: string
   defaultServiceTier: string
   serviceTierOptions: string[]
   enabledTools: string[]
@@ -52,6 +53,7 @@ export type RuntimeCategory = {
   shortName: string
   subscriptionLevel: string
   modelLane: string
+  enabled: boolean
   supportedModels: string[]
   supportedFeatures: string[]
 }
@@ -81,6 +83,8 @@ export type RuntimeVersion = {
 }
 
 export type RuntimeModelSurface = {
+  /** True only when the upstream account-scoped model endpoint succeeded. */
+  available: boolean
   defaultModel: string
   title: string
   secondaryTitle: string
@@ -235,6 +239,7 @@ function normalizeModelSurface(value: unknown): RuntimeModelSurface {
       shortName: stringValue(category.shortName),
       subscriptionLevel: stringValue(category.subscriptionLevel),
       modelLane: stringValue(category.modelLane),
+      enabled: category.enabled !== false,
       supportedModels: stringArray(category.supportedModels),
       supportedFeatures: stringArray(category.supportedFeatures),
     }]
@@ -262,6 +267,7 @@ function normalizeModelSurface(value: unknown): RuntimeModelSurface {
       reasoningType: stringValue(model.reasoningType),
       configurableThinkingEffort: model.configurableThinkingEffort === true,
       thinkingEfforts,
+      defaultThinkingEffort: stringValue(model.defaultThinkingEffort),
       defaultServiceTier: stringValue(model.defaultServiceTier),
       serviceTierOptions: stringArray(model.serviceTierOptions),
       enabledTools: stringArray(model.enabledTools),
@@ -300,6 +306,10 @@ function normalizeModelSurface(value: unknown): RuntimeModelSurface {
   }) : []
 
   return {
+    // Missing on older/failed bridge payloads is deliberately not treated as
+    // success: authenticated model selection must be backed by this account's
+    // current catalog rather than an empty or static fallback.
+    available: surface.available === true,
     defaultModel: stringValue(surface.defaultModel),
     title: stringValue(surface.title),
     secondaryTitle: stringValue(surface.secondaryTitle),

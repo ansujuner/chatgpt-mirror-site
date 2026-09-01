@@ -593,18 +593,9 @@ export function ModelMenu({
       ? '5.6 Sol'
       : undefined)
 
-  const models: readonly ReasoningModelOption[] | undefined = modelOptions ?? (planVariant === 'pro'
-    ? [
-        {
-          id: 'gpt-5-6-pro',
-          label: 'Pro',
-          description: '最强推理能力，适合复杂和高难度任务',
-          triggerLabel: 'Pro',
-        },
-        { id: '5.6-sol', label: '5.6 Sol', description: '高级推理与复杂任务' },
-        { id: '5.6-terra', label: '5.6 Terra', description: '快速处理日常事务' },
-      ]
-    : undefined)
+  // Authenticated model choices are account-scoped runtime data. Never
+  // manufacture a Pro slug while that catalog is loading or unavailable.
+  const models: readonly ReasoningModelOption[] = modelOptions ?? []
 
   return (
     <AnchoredPopover

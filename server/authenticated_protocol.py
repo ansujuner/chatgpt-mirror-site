@@ -23,7 +23,7 @@ import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from bs4 import BeautifulSoup
@@ -292,6 +292,10 @@ class ParsedAuthenticatedStream:
     images: tuple[AuthenticatedImageAsset, ...] = ()
     image_generation_pending: bool = False
     image_generation_failed: bool = False
+    # Private transport state.  A root SSE can hand the turn to WebSocket (or
+    # advertise a resume token) before it emits an assistant message.  Callers
+    # must resume that already-submitted turn instead of replaying the POST.
+    stream_handoff_pending: bool = False
 
 
 def _mapping_string(value: Mapping[str, Any], *keys: str) -> str:
@@ -325,6 +329,29 @@ def _request_id(response: Any) -> str | None:
         value = headers.get(key) or headers.get(key.title())
         if isinstance(value, str) and value:
             return value[:256]
+    return None
+
+
+def _private_response_header(response: Any, name: str) -> str | None:
+    """Read one bounded response header without ever logging its value."""
+
+    headers = getattr(response, "headers", {})
+    if not isinstance(headers, Mapping):
+        return None
+    expected = name.casefold()
+    for key, value in headers.items():
+        if not isinstance(key, str) or key.casefold() != expected:
+            continue
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if (
+            not normalized
+            or len(normalized) > 65_536
+            or _has_header_control(normalized)
+        ):
+            return None
+        return normalized
     return None
 
 
@@ -1152,6 +1179,17 @@ class _StreamAccumulator:
             else ""
         )
 
+        # The root SSE may contain only transport handoff state.  This is not a
+        # malformed completion and, critically, it is not safe to retry the
+        # original conversation POST.  Return a private partial result so the
+        # bridge can issue the official read-like offset=0 resume request.
+        stream_handoff_pending = bool(
+            (self.websocket_topic_id or self.resume_token)
+            and not images
+            and not self.image_generation_failed
+            and (not assistant_id or not self.done)
+        )
+
         if not self.conversation_id:
             raise AuthenticatedProtocolError(
                 "authenticated_stream_missing_conversation_id",
@@ -1159,12 +1197,15 @@ class _StreamAccumulator:
                 stage="conversation_stream",
                 retryable=True,
             )
-        if (
-            not answer
-            and not images
-            and not self.image_generation_pending
-            and not self.image_generation_failed
-        ) or not assistant_id:
+        if not stream_handoff_pending and (
+            (
+                not answer
+                and not images
+                and not self.image_generation_pending
+                and not self.image_generation_failed
+            )
+            or not assistant_id
+        ):
             raise AuthenticatedProtocolError(
                 "authenticated_stream_missing_assistant_message",
                 "The authenticated response did not contain a complete assistant message.",
@@ -1198,6 +1239,7 @@ class _StreamAccumulator:
                 and not images
             ),
             image_generation_failed=self.image_generation_failed and not images,
+            stream_handoff_pending=stream_handoff_pending,
         )
 
 
@@ -1524,11 +1566,19 @@ class AuthenticatedProtocolBridge:
         *,
         stage: str,
         timeout: int,
+        retry_network: bool = False,
         **kwargs: Any,
     ) -> Any:
         url = path if path.startswith("http") else f"{self.config.origin}{path}"
         method_upper = method.upper()
-        network_attempts = self.config.network_attempts if method_upper in {"GET", "HEAD"} else 1
+        # Mutation POSTs are never automatically replayed because the upstream
+        # may have committed them before the local socket failed.  Callers may
+        # opt in only for read-like POSTs such as conversation/resume.
+        network_attempts = (
+            self.config.network_attempts
+            if method_upper in {"GET", "HEAD"} or retry_network
+            else 1
+        )
         last_network_error: Exception | None = None
         for attempt in range(network_attempts):
             try:
@@ -1778,7 +1828,7 @@ class AuthenticatedProtocolBridge:
         reasoning_effort: str | None,
         service_tier: str | None,
         system_hints: Sequence[str] | None,
-    ) -> str:
+    ) -> str | None:
         body = self._patch_configured_body(
             build_conversation_body(
                 session,
@@ -1808,14 +1858,24 @@ class AuthenticatedProtocolBridge:
         )
         payload = _json_response(response, "conversation_prepare")
         conduit = payload.get("conduit_token")
-        if not isinstance(conduit, str) or not conduit:
-            status = payload.get("status")
-            code = _safe_code(status, "authenticated_conduit_token_missing")
+        # The production client treats every successful prepare response as a
+        # successful prepare even when the optional conduit token is absent.
+        # In that case it submits normally with client_prepare_state=success
+        # and simply omits x-conduit-token.  Some authenticated accounts return
+        # exactly {"status":"ok"} here, so requiring the token incorrectly
+        # turns a valid 2xx response into a retry loop.
+        if conduit is None or conduit == "":
+            return None
+        if (
+            not isinstance(conduit, str)
+            or len(conduit) > 65_536
+            or _has_header_control(conduit)
+        ):
             raise AuthenticatedProtocolError(
-                code,
-                "Authenticated conversation prepare did not return a conduit token.",
+                "authenticated_conduit_token_invalid",
+                "Authenticated conversation prepare returned an invalid conduit token.",
                 stage="conversation_prepare",
-                retryable=True,
+                retryable=False,
                 upstream_request_id=_request_id(response),
             )
         return conduit
@@ -1830,7 +1890,7 @@ class AuthenticatedProtocolBridge:
         session: AuthenticatedProtocolSession,
         grant: AuthenticatedRequirementsGrant,
         *,
-        conduit_token: str,
+        conduit_token: str | None,
         trace_id: str,
     ) -> dict[str, str]:
         headers = {
@@ -1841,9 +1901,10 @@ class AuthenticatedProtocolBridge:
             "OAI-Echo-Logs": "",
             "OAI-Telemetry": "[1,null]",
             "OpenAI-Sentinel-Chat-Requirements-Token": grant.token,
-            "x-conduit-token": conduit_token,
             "x-oai-turn-trace-id": trace_id,
         }
+        if conduit_token:
+            headers["x-conduit-token"] = conduit_token
         if grant.proof_token:
             headers["OpenAI-Sentinel-Proof-Token"] = grant.proof_token
         if grant.turnstile_token:
@@ -1906,7 +1967,7 @@ class AuthenticatedProtocolBridge:
         user_message: Mapping[str, Any],
         model: str,
         trace_id: str,
-        conduit_token: str,
+        conduit_token: str | None,
         grant: AuthenticatedRequirementsGrant,
         reasoning_effort: str | None,
         service_tier: str | None,
@@ -1938,13 +1999,42 @@ class AuthenticatedProtocolBridge:
             json=body,
             stream=True,
         )
+        parsed: ParsedAuthenticatedStream
+        initial_request_id: str | None
+        response_resume_token: str | None
         try:
             _require_success(response, "conversation_submit")
-            parsed = parse_authenticated_sse(
-                self._iter_limited_lines(response),
-                existing_conversation_id=session.conversation_id,
+            try:
+                parsed = parse_authenticated_sse(
+                    self._iter_limited_lines(response),
+                    existing_conversation_id=session.conversation_id,
+                )
+            except AuthenticatedProtocolError as error:
+                # Once the submit returned a successful HTTP response, the
+                # user's turn may already be committed upstream.  Replaying
+                # /f/conversation on a parser/stream error can duplicate the
+                # message or image charge, so only read-like resume is allowed.
+                raise AuthenticatedProtocolError(
+                    error.code,
+                    "The submitted authenticated conversation stream could not be completed.",
+                    stage=error.stage,
+                    retryable=False,
+                    upstream_status=error.upstream_status,
+                    upstream_request_id=error.upstream_request_id
+                    or _request_id(response),
+                ) from error
+            initial_request_id = _request_id(response)
+            # The official stream adapter also accepts the interrupt/resume
+            # token from the successful submit response header. It remains
+            # private transport state and is never returned by the public API.
+            response_resume_token = _private_response_header(
+                response, "x-conduit-token"
             )
-            return parsed, _request_id(response)
+            if response_resume_token and not parsed.state.get("resumeToken"):
+                parsed = replace(
+                    parsed,
+                    state={**parsed.state, "resumeToken": response_resume_token},
+                )
         finally:
             close = getattr(response, "close", None)
             if callable(close):
@@ -1953,15 +2043,157 @@ class AuthenticatedProtocolBridge:
                 except Exception:
                     pass
 
+        if not parsed.stream_handoff_pending:
+            return parsed, initial_request_id
+
+        resume_token = parsed.state.get("resumeToken")
+        if not isinstance(resume_token, str):
+            resume_token = None
+        image_handoff = "picture_v2" in (system_hints or ())
+
+        def handoff_poll_fallback(
+            partial: ParsedAuthenticatedStream,
+        ) -> ParsedAuthenticatedStream:
+            # The turn is already committed at this point. If its account uses
+            # the WebSocket handoff path or rejects HTTP resume, preserve the
+            # conversation for the account-bound history recovery path. This
+            # must never fall back to replaying the original submit.
+            return replace(
+                partial,
+                state={
+                    **partial.state,
+                    "transportHandoffPending": True,
+                    "imageGenerationPending": (
+                        partial.image_generation_pending or image_handoff
+                    ),
+                    "streamComplete": False,
+                },
+                image_generation_pending=(
+                    partial.image_generation_pending or image_handoff
+                ),
+                stream_handoff_pending=False,
+            )
+
+        try:
+            resumed, resume_request_id = self._resume_conversation_stream(
+                session,
+                conversation_id=parsed.conversation_id,
+                resume_token=resume_token,
+                offset=0,
+                trace_id=trace_id,
+            )
+        except AuthenticatedProtocolError as error:
+            return handoff_poll_fallback(parsed), (
+                error.upstream_request_id or initial_request_id
+            )
+        if resumed.stream_handoff_pending:
+            return handoff_poll_fallback(resumed), (
+                resume_request_id or initial_request_id
+            )
+        return resumed, resume_request_id or initial_request_id
+
+    def _resume_conversation_stream(
+        self,
+        session: AuthenticatedProtocolSession,
+        *,
+        conversation_id: str,
+        resume_token: str | None,
+        offset: int,
+        trace_id: str,
+    ) -> tuple[ParsedAuthenticatedStream, str | None]:
+        """Read one offset-based continuation without resubmitting a turn."""
+
+        if not isinstance(conversation_id, str) or not isinstance(
+            resume_token, (str, type(None))
+        ):
+            raise AuthenticatedProtocolError(
+                "authenticated_resume_invalid",
+                "The authenticated resume state is invalid.",
+                stage="conversation_resume",
+                retryable=False,
+            )
+        normalized_conversation_id = conversation_id.strip()
+        normalized_token = (resume_token or "").strip()
+        if (
+            session.closed
+            or not normalized_conversation_id
+            or len(normalized_conversation_id) > 512
+            or _has_header_control(normalized_conversation_id)
+            or len(normalized_token) > 65_536
+            or _has_header_control(normalized_token)
+            or isinstance(offset, bool)
+            or not isinstance(offset, int)
+            # A non-zero resume starts with suffix deltas/patches and requires
+            # the original decoder document plus acknowledged-event count.
+            or offset != 0
+            or not trace_id
+            or len(trace_id) > 512
+            or _has_header_control(trace_id)
+        ):
+            raise AuthenticatedProtocolError(
+                "authenticated_resume_invalid",
+                "The authenticated resume state is invalid.",
+                stage="conversation_resume",
+                retryable=False,
+            )
+
+        headers = {
+            **self._auth_headers(
+                session, referer=f"{self.config.origin}/c/{normalized_conversation_id}"
+            ),
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+            "OAI-Echo-Logs": "",
+            "OAI-Telemetry": "[1,null]",
+            "x-oai-turn-trace-id": trace_id,
+        }
+        if normalized_token:
+            headers["x-conduit-token"] = normalized_token
+        response = self._request(
+            session,
+            "POST",
+            "/backend-api/f/conversation/resume",
+            stage="conversation_resume",
+            timeout=self.config.conversation_timeout_seconds,
+            retry_network=True,
+            headers=headers,
+            json={"conversation_id": normalized_conversation_id, "offset": offset},
+            stream=True,
+        )
+        try:
+            _require_success(response, "conversation_resume")
+            parsed = parse_authenticated_sse(
+                self._iter_limited_lines(response),
+                existing_conversation_id=normalized_conversation_id,
+            )
+            request_id = _request_id(response)
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        if parsed.conversation_id != normalized_conversation_id:
+            raise AuthenticatedProtocolError(
+                "authenticated_resume_conversation_mismatch",
+                "The authenticated resume stream returned a different conversation.",
+                stage="conversation_resume",
+                retryable=False,
+                upstream_request_id=request_id,
+            )
+        return parsed, request_id
+
     def resume_turn(
         self,
         session: AuthenticatedProtocolSession,
         *,
         conversation_id: str,
-        resume_token: str,
+        resume_token: str | None = None,
         offset: int = 0,
     ) -> AuthenticatedChatResult:
-        """Resume an asynchronous authenticated turn from its conduit token.
+        """Resume an asynchronous authenticated turn from its handoff state.
 
         Image generation commonly hands the browser off before the tool has
         emitted its final asset.  The official client resumes that same stream
@@ -1969,24 +2201,15 @@ class AuthenticatedProtocolBridge:
         only that read-like continuation; it never resubmits the user message.
         """
 
-        normalized_conversation_id = conversation_id.strip()
-        normalized_token = resume_token.strip()
+        normalized_conversation_id = (
+            conversation_id.strip() if isinstance(conversation_id, str) else ""
+        )
         if (
             session.closed
             or not normalized_conversation_id
             or normalized_conversation_id != session.conversation_id
             or len(normalized_conversation_id) > 512
             or _has_header_control(normalized_conversation_id)
-            or not normalized_token
-            or len(normalized_token) > 65_536
-            or _has_header_control(normalized_token)
-            or isinstance(offset, bool)
-            or not isinstance(offset, int)
-            # A non-zero resume starts with suffix deltas/patches and requires
-            # the original decoder document plus acknowledged-event count.
-            # This bridge intentionally supports only the official fresh
-            # replay path until that state is retained end to end.
-            or offset != 0
         ):
             raise AuthenticatedProtocolError(
                 "authenticated_resume_invalid",
@@ -1996,50 +2219,21 @@ class AuthenticatedProtocolBridge:
             )
 
         with session.lock:
-            response = self._request(
+            trace_id = str(session.conversation_state.get("turnTraceId") or uuid.uuid4())
+            parsed, upstream_request_id = self._resume_conversation_stream(
                 session,
-                "POST",
-                "/backend-api/f/conversation/resume",
-                stage="conversation_resume",
-                timeout=self.config.conversation_timeout_seconds,
-                headers={
-                    **self._auth_headers(
-                        session, referer=self._conversation_referer(session)
-                    ),
-                    "Accept": "text/event-stream",
-                    "Content-Type": "application/json",
-                    "Cache-Control": "no-cache",
-                    "OAI-Echo-Logs": "",
-                    "OAI-Telemetry": "[1,null]",
-                    "x-conduit-token": normalized_token,
-                },
-                json={
-                    "conversation_id": normalized_conversation_id,
-                    "offset": offset,
-                },
-                stream=True,
+                conversation_id=normalized_conversation_id,
+                resume_token=resume_token,
+                offset=offset,
+                trace_id=trace_id,
             )
-            try:
-                _require_success(response, "conversation_resume")
-                parsed = parse_authenticated_sse(
-                    self._iter_limited_lines(response),
-                    existing_conversation_id=normalized_conversation_id,
-                )
-                upstream_request_id = _request_id(response)
-            finally:
-                close = getattr(response, "close", None)
-                if callable(close):
-                    try:
-                        close()
-                    except Exception:
-                        pass
-
-            if parsed.conversation_id != normalized_conversation_id:
+            if parsed.stream_handoff_pending:
                 raise AuthenticatedProtocolError(
-                    "authenticated_resume_conversation_mismatch",
-                    "The authenticated resume stream returned a different conversation.",
+                    "authenticated_resume_incomplete",
+                    "The authenticated resume stream remained in transport handoff.",
                     stage="conversation_resume",
                     retryable=False,
+                    upstream_request_id=upstream_request_id,
                 )
             session.parent_message_id = parsed.parent_message_id
             session.last_used_monotonic = time.monotonic()
@@ -2212,6 +2406,7 @@ class AuthenticatedProtocolBridge:
                         "parentMessageId": parsed.parent_message_id,
                         "model": selected_model,
                         "turnIndex": session.turn_index,
+                        "turnTraceId": trace_id,
                     }
                     return AuthenticatedChatResult(
                         answer=parsed.answer,
@@ -2243,7 +2438,17 @@ class AuthenticatedProtocolBridge:
                         current_error.code == "authenticated_session_expired"
                         or current_error.upstream_status == 401
                     )
-                    if is_auth_error and not refreshed:
+                    # A successful conversation submit may surface a later
+                    # authentication error inside the SSE or its resume call.
+                    # Refreshing is useful, but restarting this loop would
+                    # replay the already-committed user turn (and can duplicate
+                    # an image charge).  Only pre-commit/submit-HTTP auth
+                    # failures may restart the full turn.
+                    post_commit_error = current_error.stage in {
+                        "conversation_stream",
+                        "conversation_resume",
+                    }
+                    if is_auth_error and not refreshed and not post_commit_error:
                         refreshed = True
                         if self._refresh_access_token(session):
                             continue
@@ -2264,7 +2469,7 @@ class AuthenticatedProtocolBridge:
                 last_error.code,
                 (
                     "The authenticated ChatGPT conversation failed after "
-                    f"{self.config.max_turn_attempts} attempt(s)."
+                    f"{attempt} attempt(s)."
                 ),
                 stage=last_error.stage,
                 retryable=False,

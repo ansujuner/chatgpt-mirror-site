@@ -307,6 +307,60 @@ class ImageGenerationApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(json.loads(status.body)["status"], "succeeded")
 
+    async def test_tokenless_handoff_pending_turn_uses_history_polling(self) -> None:
+        pending = AuthenticatedChatResult(
+            answer="",
+            conversation_id="conversation-private-upstream",
+            conversation_state={"websocketTopicId": "private-topic"},
+            parent_message_id="",
+            assistant_message_id="",
+            upstream_request_id=None,
+            attempts=1,
+            model="catalog-model",
+            image_generation_pending=True,
+        )
+        recovered = (
+            AuthenticatedImageAsset(
+                asset_pointer="sediment://file-history-private",
+                width=1024,
+                height=1024,
+                mime_type="image/png",
+            ),
+        )
+        protocol_session = object()
+        with (
+            patch.object(
+                application,
+                "_execute_authenticated_chat",
+                return_value=("authconv-public", protocol_session, pending),
+            ),
+            patch.object(application.AUTH_BRIDGE, "resume_turn") as resume,
+            patch.object(
+                application.AUTH_IMAGES_BRIDGE,
+                "wait_for_images",
+                return_value=recovered,
+            ) as poll,
+        ):
+            created = await application.create_image_generation(
+                _request(
+                    "/api/images/generations", method="POST", handle=self.handle
+                ),
+                _chat_request(),
+            )
+            await asyncio.gather(*list(application.IMAGE_TASKS))
+
+        resume.assert_not_called()
+        poll.assert_called_once()
+        self.assertEqual(
+            poll.call_args.args[1],
+            "conversation-private-upstream",
+        )
+        status = await application.image_generation_status(
+            json.loads(created.body)["id"],
+            _request("/api/images/generations/job", method="GET", handle=self.handle),
+        )
+        self.assertEqual(json.loads(status.body)["status"], "succeeded")
+
     async def test_reference_only_turn_preserves_official_empty_prompt(self) -> None:
         result = AuthenticatedChatResult(
             answer="",

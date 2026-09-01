@@ -127,6 +127,7 @@ class HistoryMessage:
     role: str
     content: str
     created_at: str | None
+    status: str = ""
 
 
 @dataclass(frozen=True)
@@ -292,6 +293,7 @@ def _visible_message(message: Mapping[str, Any]) -> HistoryMessage | None:
         role=role,
         content=content,
         created_at=_safe_time(message.get("create_time") or message.get("created_at")),
+        status=_safe_text(message.get("status"), maximum=80, single_line=True),
     )
 
 

@@ -22,6 +22,7 @@ from .authenticated_protocol import (
     AuthenticatedProtocolError,
     AuthenticatedProtocolSession,
 )
+from .authenticated_history import HistoryDetail, HistoryMessage
 
 
 def _request_with_cookie(handle: str) -> Request:
@@ -757,6 +758,67 @@ class AuthenticatedApplicationTests(unittest.TestCase):
             )
         upload.assert_not_called()
         self.assertIsNone(run_turn.call_args.kwargs["user_message"])
+
+    def test_committed_handoff_is_recovered_from_history_without_resubmit(self) -> None:
+        class HTTP:
+            def close(self) -> None:
+                pass
+
+        protocol_session = AuthenticatedProtocolSession(
+            http=HTTP(),
+            access_token="test-access-token",
+            account_id="account-pro",
+            user_id="user-pro",
+            conversation_id="conversation-private",
+        )
+        pending = AuthenticatedChatResult(
+            answer="",
+            conversation_id="conversation-private",
+            conversation_state={
+                "lastUserMessageId": "user-committed",
+                "transportHandoffPending": True,
+            },
+            parent_message_id="",
+            assistant_message_id="",
+            upstream_request_id="submit-request-private",
+            attempts=1,
+            model="catalog-model",
+        )
+        detail = HistoryDetail(
+            upstream_id="conversation-private",
+            title="Recovered",
+            created_at=None,
+            updated_at=None,
+            current_node="assistant-recovered",
+            model="catalog-model",
+            messages=(
+                HistoryMessage("user-committed", "user", "hello", None),
+                HistoryMessage(
+                    "assistant-recovered",
+                    "assistant",
+                    "recovered answer",
+                    None,
+                    "finished_successfully",
+                ),
+            ),
+        )
+
+        with patch.object(
+            application,
+            "_history_read_with_refresh",
+            return_value=detail,
+        ) as history:
+            recovered = application._recover_authenticated_handoff(
+                self.entry,
+                protocol_session,
+                pending,
+            )
+
+        history.assert_called_once()
+        self.assertEqual(recovered.answer, "recovered answer")
+        self.assertEqual(recovered.parent_message_id, "assistant-recovered")
+        self.assertFalse(recovered.conversation_state["transportHandoffPending"])
+        self.assertEqual(protocol_session.parent_message_id, "assistant-recovered")
 
     def test_image_generation_upload_uses_images_composer_wire_shape(self) -> None:
         class HTTP:

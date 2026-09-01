@@ -268,22 +268,29 @@ function powerOptionLabel(
   return endpointLabel
 }
 
-function categoryLaneForModel(surface: RuntimeModelSurface, modelSlug: string) {
+function categoryForModel(surface: RuntimeModelSurface, modelSlug: string) {
+  if (!surface.available) return undefined
   return surface.categories.find((category) => (
+    category.enabled
+    && (
     category.defaultModel === modelSlug || category.supportedModels.includes(modelSlug)
-  ))?.modelLane ?? ''
+    )
+  ))
+}
+
+function availablePresetType(presetType: string) {
+  const normalized = presetType.trim().toLocaleLowerCase()
+  return normalized === 'available' || normalized === 'normal'
 }
 
 function surfaceOffersModel(surface: RuntimeModelSurface, modelSlug: string) {
-  if (surface.categories.some((category) => (
-    category.defaultModel === modelSlug || category.supportedModels.includes(modelSlug)
-  ))) return true
+  if (categoryForModel(surface, modelSlug)) return true
   return surface.versions.some((version) => (
     version.enabled
     && (
       version.slugs.includes(modelSlug)
       || version.presets.some((preset) => (
-        preset.presetType !== 'upgrade' && preset.modelSlug === modelSlug
+        availablePresetType(preset.presetType) && preset.modelSlug === modelSlug
       ))
     )
   ))
@@ -300,15 +307,10 @@ function concreteFallbackModel(model: PlusModelId, mode: PlusMode) {
   if (model === '5.6-luna') return 'gpt-5-6-t-mini'
   if (model === '5.5') return 'gpt-5-5-thinking'
   if (model === '5.6-terra') return 'gpt-5-6-instant'
-  if (model === '5.6-sol-pro') return 'gpt-5-6-pro'
   return 'gpt-5-6-thinking'
 }
 
-function fallbackPowerOptions(
-  mode: PlusMode,
-  plan: AccountPlan,
-  selectedModel: PlusModelId,
-): readonly PowerSliderOption[] {
+function fallbackPowerOptions(mode: PlusMode, selectedModel: PlusModelId): readonly PowerSliderOption[] {
   if (mode === 'work') {
     const modelSlug = concreteFallbackModel(selectedModel, mode)
     return [
@@ -327,25 +329,18 @@ function fallbackPowerOptions(
     if (/instant$|t-mini$/i.test(explicitModel)) {
       return [{ id: `chat:${explicitModel}`, label: '极速', modelSlug: explicitModel, lane: 'instant', serviceTierOptions: [] }]
     }
-    if (/pro$/i.test(explicitModel)) {
-      return [{ id: `chat:${explicitModel}:standard`, label: 'Pro', modelSlug: explicitModel, thinkingEffort: 'standard', lane: 'pro', isMaximumEffort: true, serviceTierOptions: [] }]
-    }
+    // A Pro endpoint is entitlement metadata, never a naming convention.
+    if (/pro$/i.test(explicitModel)) return []
     return [
       { id: `chat:${explicitModel}:standard`, label: '中', modelSlug: explicitModel, thinkingEffort: 'standard', lane: 'thinking', serviceTierOptions: [] },
       { id: `chat:${explicitModel}:extended`, label: '高', modelSlug: explicitModel, thinkingEffort: 'extended', lane: 'thinking', serviceTierOptions: [] },
     ]
   }
 
-  const plusOptions: PowerSliderOption[] = [
+  return [
     { id: 'chat:instant', label: '极速', modelSlug: 'gpt-5-6-instant', lane: 'instant', serviceTierOptions: [] },
     { id: 'chat:standard', label: '中', modelSlug: 'gpt-5-6-thinking', thinkingEffort: 'standard', lane: 'thinking', serviceTierOptions: [] },
     { id: 'chat:extended', label: '高', modelSlug: 'gpt-5-6-thinking', thinkingEffort: 'extended', lane: 'thinking', serviceTierOptions: [] },
-  ]
-  if (plan !== 'pro') return plusOptions
-  return [
-    ...plusOptions,
-    { id: 'chat:max', label: '极高', modelSlug: 'gpt-5-6-thinking', thinkingEffort: 'max', lane: 'thinking', serviceTierOptions: [] },
-    { id: 'chat:pro', label: 'Pro', modelSlug: 'gpt-5-6-pro', thinkingEffort: 'standard', lane: 'pro', isMaximumEffort: true, serviceTierOptions: [] },
   ]
 }
 
@@ -369,16 +364,98 @@ function runtimeVersionForSelection(surface: RuntimeModelSurface, selectedModel:
   ))
 }
 
+function presetModelForSelection(selectedModel: PlusModelId, mode: PlusMode) {
+  if (selectedModel === 'default' || selectedModel === '5.6-sol-pro') return null
+  return concreteFallbackModel(selectedModel, mode)
+}
+
+function advertisedPresetEffort(surface: RuntimeModelSurface, modelSlug: string, rawEffort: string) {
+  const direct = requestReasoningEffort(rawEffort)
+  if (direct) return direct
+
+  const model = surface.models.find((candidate) => candidate.slug === modelSlug)
+  if (!model) return undefined
+  const advertised = model.thinkingEfforts.flatMap((effort) => {
+    const normalized = requestReasoningEffort(effort.value)
+    return normalized ? [normalized] : []
+  })
+  const advertisedDefault = requestReasoningEffort(model.defaultThinkingEffort)
+  if (advertisedDefault && (!advertised.length || advertised.includes(advertisedDefault))) {
+    return advertisedDefault
+  }
+  // Prefer the two ordinary Chat reasoning levels only when the model itself
+  // advertises them. This avoids inventing `standard` for a Pro preset whose
+  // catalog intentionally omits an effort value.
+  return advertised.find((effort) => effort === 'standard')
+    ?? advertised.find((effort) => effort === 'extended')
+    ?? advertised[0]
+}
+
+function isCatalogBackedProPreset(
+  surface: RuntimeModelSurface,
+  modelSlug: string,
+  presetLane: string,
+) {
+  if (presetLane.trim().toLocaleLowerCase() !== 'pro') return false
+  const model = surface.models.find((candidate) => candidate.slug === modelSlug)
+  const category = categoryForModel(surface, modelSlug)
+  // The official picker treats an account-scoped available preset's lane as
+  // the execution lane. Category lane and subscription level are independent
+  // metadata and are not required to duplicate `pro`.
+  return Boolean(model && category)
+}
+
+function surfaceOffersProPreset(surface: RuntimeModelSurface, modelSlug: string) {
+  return surface.versions.some((version) => (
+    version.enabled
+    && version.presets.some((preset) => (
+      preset.modelSlug === modelSlug
+      && preset.presetType.trim().toLocaleLowerCase() === 'available'
+      && preset.lane.trim().toLocaleLowerCase() === 'pro'
+    ))
+  ))
+}
+
 function endpointPresetOptions(surface: RuntimeModelSurface, selectedModel: PlusModelId) {
+  if (!surface.available) return []
   const version = runtimeVersionForSelection(surface, selectedModel)
-  if (!version) return []
+  if (!version?.enabled) return []
+  const isWorkSurface = surface.defaultModel.endsWith('-wm')
+  const requiredModelSlug = presetModelForSelection(
+    selectedModel,
+    isWorkSurface ? 'work' : 'chat',
+  )
   return version.presets.flatMap((preset, index): PowerSliderOption[] => {
-    if (!preset.modelSlug || preset.presetType === 'upgrade') return []
-    const lane = preset.lane || categoryLaneForModel(surface, preset.modelSlug)
-    const thinkingEffort = requestReasoningEffort(preset.thinkingEffort)
+    if (!preset.modelSlug || !availablePresetType(preset.presetType)) return []
+    if (requiredModelSlug && preset.modelSlug !== requiredModelSlug) return []
+    if (selectedModel === '5.6-sol-pro' && preset.lane.trim().toLocaleLowerCase() !== 'pro') return []
+
+    const model = surface.models.find((candidate) => candidate.slug === preset.modelSlug)
+    const category = categoryForModel(surface, preset.modelSlug)
+    if (!model || !category) return []
+
+    const presetLane = preset.lane.trim()
+    const categoryLane = category.modelLane.trim()
+    const presetIsPro = presetLane.toLocaleLowerCase() === 'pro'
+    // Current official Pro lookup accepts only `available`; `normal` remains a
+    // bounded legacy value for non-Pro presets rather than a Pro entitlement.
+    if (presetIsPro && preset.presetType.trim().toLocaleLowerCase() !== 'available') return []
+    const catalogBackedPro = isCatalogBackedProPreset(surface, preset.modelSlug, presetLane)
+    // Never infer Pro from category/subscription metadata alone. Conversely,
+    // reject a category-Pro/preset-non-Pro mismatch instead of inventing its
+    // execution semantics.
+    if (categoryLane.toLocaleLowerCase() === 'pro' && !presetIsPro) return []
+    if (presetIsPro && !catalogBackedPro) return []
+
+    const lane = presetLane || categoryLane
+    const thinkingEffort = advertisedPresetEffort(
+      surface,
+      preset.modelSlug,
+      preset.thinkingEffort,
+    )
     const defaultServiceTier = requestServiceTier(preset.defaultServiceTier)
     return [{
-      id: `preset:${version.id}:${preset.id ?? index}:${preset.modelSlug}:${preset.thinkingEffort}`,
+      id: `preset:${version.id}:${preset.id ?? index}:${preset.modelSlug}:${thinkingEffort ?? 'default'}`,
       label: powerOptionLabel(
         surface,
         thinkingEffort,
@@ -390,7 +467,7 @@ function endpointPresetOptions(surface: RuntimeModelSurface, selectedModel: Plus
       lane,
       ...(defaultServiceTier ? { defaultServiceTier } : {}),
       serviceTierOptions: preset.serviceTierOptions,
-      isMaximumEffort: lane.toLocaleLowerCase() === 'pro',
+      isMaximumEffort: catalogBackedPro,
     }]
   })
 }
@@ -408,9 +485,16 @@ function endpointModelOptions(
   // or enabled version catalog may become a Chat slider/request selection.
   if (!surfaceOffersModel(surface, modelSlug)) return []
   const model = surface.models.find((candidate) => candidate.slug === modelSlug)
-  if (!model) return []
-  const lane = categoryLaneForModel(surface, model.slug)
-  if (plan !== 'pro' && lane.toLocaleLowerCase() === 'pro') return []
+  const category = categoryForModel(surface, modelSlug)
+  if (!model || !category) return []
+  const lane = category.modelLane
+  const hasProPreset = surfaceOffersProPreset(surface, modelSlug)
+  if (hasProPreset) {
+    // Pro is exposed only through an exact, available preset in an enabled
+    // version. Model/category presence alone cannot authorize a request.
+    return plan === 'pro' ? endpointPresetOptions(surface, selectedModel) : []
+  }
+  if (lane.toLocaleLowerCase() === 'pro') return []
   const version = runtimeVersionForSelection(surface, selectedModel)
   const tierMetadata = (thinkingEffort?: RequestReasoningEffort) => {
     const preset = version?.presets.find((candidate) => (
@@ -435,7 +519,6 @@ function endpointModelOptions(
       lane,
       ...(tiers.defaultServiceTier ? { defaultServiceTier: tiers.defaultServiceTier } : {}),
       serviceTierOptions: tiers.serviceTierOptions,
-      isMaximumEffort: lane.toLocaleLowerCase() === 'pro',
     }] satisfies PowerSliderOption[]
   }
   return model.thinkingEfforts.flatMap((effort, index): PowerSliderOption[] => {
@@ -455,7 +538,6 @@ function endpointModelOptions(
       lane,
       ...(tiers.defaultServiceTier ? { defaultServiceTier: tiers.defaultServiceTier } : {}),
       serviceTierOptions: tiers.serviceTierOptions,
-      isMaximumEffort: lane.toLocaleLowerCase() === 'pro',
     }]
   })
 }
@@ -467,28 +549,26 @@ function powerOptionsForRuntime(
   selectedModel: PlusModelId,
 ) {
   const surface = mode === 'work' ? runtime?.work : runtime?.chat
-  if (surface) {
+  if (surface?.available) {
     const options = selectedModel === 'default'
       ? endpointPresetOptions(surface, selectedModel)
       : endpointModelOptions(surface, selectedModel, plan)
-    if (plan === 'pro' && mode === 'chat' && selectedModel === 'default') {
-      const maximum = options.filter((option) => option.isMaximumEffort)
-      if (maximum.length) {
-        return [
-          ...options.filter((option) => !option.isMaximumEffort),
-          ...maximum,
-        ]
-      }
-      // A runtime catalog without a Pro lane must not silently downgrade a
-      // Pro account's default to the ordinary Thinking endpoint.
-      return fallbackPowerOptions(mode, plan, selectedModel)
-    }
     const entitledOptions = mode === 'chat' && plan !== 'pro'
       ? options.filter((option) => !option.isMaximumEffort)
       : options
-    if (entitledOptions.length) return entitledOptions
+    if (plan === 'pro' && mode === 'chat' && selectedModel === 'default') {
+      const maximum = entitledOptions.filter((option) => option.isMaximumEffort)
+      return [
+        ...entitledOptions.filter((option) => !option.isMaximumEffort),
+        ...maximum,
+      ]
+    }
+    return entitledOptions
   }
-  return fallbackPowerOptions(mode, plan, selectedModel)
+  // Paid traffic must wait for the account-scoped runtime catalog. Static
+  // options are display-only for the anonymous/free shell and can never select
+  // a guessed Pro slug for an authenticated request.
+  return plan === 'free' ? fallbackPowerOptions(mode, selectedModel) : []
 }
 
 function preferredPowerIndex(
@@ -515,6 +595,7 @@ function plusRequestModel(
   selectedPowerOption?: PowerSliderOption,
 ) {
   if (selectedPowerOption?.modelSlug) return selectedPowerOption.modelSlug
+  if (model === '5.6-sol-pro' || /-pro$/i.test(model)) return null
   if (model.startsWith('gpt-')) return model
   if (model === 'default') {
     const runtimeDefault = mode === 'work'
@@ -532,7 +613,6 @@ function plusRequestModel(
   if (model === '5.5') return effort === 0 ? 'gpt-5-5-instant' : 'gpt-5-5-thinking'
   if (model === '5.6-terra') return 'gpt-5-6-instant'
   if (model === 'default') return effort === 0 ? 'gpt-5-6-instant' : 'gpt-5-6-thinking'
-  if (model === '5.6-sol-pro') return 'gpt-5-6-pro'
   return 'gpt-5-6-thinking'
 }
 
@@ -546,40 +626,54 @@ function blockedCapability(runtime: AccountRuntime | null, needles: readonly str
   })
 }
 
-function modelOptionsForRuntime(runtime: AccountRuntime | null, mode: PlusMode, plan: AccountPlan): readonly ReasoningModelOption[] | undefined {
-  if (!runtime) return undefined
+function modelOptionsForRuntime(runtime: AccountRuntime | null, mode: PlusMode, plan: AccountPlan): readonly ReasoningModelOption[] {
+  if (!runtime) return []
   const surface = mode === 'work' ? runtime.work : runtime.chat
-  if (!surface.models.length) return undefined
+  if (!surface.available || !surface.models.length) return []
 
   const allowedSlugs = new Set(surface.categories
     .filter((category) => {
+      if (!category.enabled) return false
       const level = category.subscriptionLevel.toLocaleLowerCase()
       if (plan === 'free') return level === 'free'
       if (plan !== 'pro' && level === 'pro') return false
       return true
     })
-    .flatMap((category) => category.supportedModels))
+    .flatMap((category) => [category.defaultModel, ...category.supportedModels])
+    .filter(Boolean))
   if (!allowedSlugs.size) {
     for (const version of surface.versions) {
       if (!version.enabled) continue
       for (const preset of version.presets) {
-        if (preset.presetType !== 'upgrade' && preset.modelSlug) allowedSlugs.add(preset.modelSlug)
+        if (availablePresetType(preset.presetType) && preset.modelSlug) allowedSlugs.add(preset.modelSlug)
       }
     }
   }
   // An empty picker catalog is not permission to expose every object returned
   // in the endpoint's global model table. Use the plan-safe fallback instead.
-  if (!allowedSlugs.size) return undefined
-  const availableModels = surface.models.filter((model) => allowedSlugs.has(model.slug))
-  if (!availableModels.length) return undefined
+  if (!allowedSlugs.size) return []
+  const availableModels = surface.models.filter((model) => {
+    if (!allowedSlugs.has(model.slug)) return false
+    const category = categoryForModel(surface, model.slug)
+    if (!category) return false
+    const lane = category.modelLane.toLocaleLowerCase()
+    const hasProPreset = surfaceOffersProPreset(surface, model.slug)
+    if (hasProPreset) return plan === 'pro'
+    return lane !== 'pro'
+  })
+  if (!availableModels.length) return []
 
-  const defaultLabel = plan === 'pro' ? 'Pro' : '默认'
+  const defaultOptions = endpointPresetOptions(surface, 'default')
+  const hasDefaultProLane = plan === 'pro'
+    && defaultOptions.some((option) => option.isMaximumEffort)
+  const defaultModel = surface.models.find((model) => model.slug === surface.defaultModel)
+  const defaultLabel = hasDefaultProLane ? 'Pro' : defaultModel?.title || '默认'
   return [
     {
       id: 'default',
       label: defaultLabel,
-      description: plan === 'pro' ? '最强推理能力，适合复杂和高难度任务' : '根据任务自动选择合适的能力',
-      triggerLabel: plan === 'pro' ? 'Pro' : undefined,
+      description: hasDefaultProLane ? '最强推理能力，适合复杂和高难度任务' : '根据账号目录选择可用能力',
+      triggerLabel: hasDefaultProLane ? 'Pro' : defaultModel?.title || undefined,
     },
     ...availableModels.map((model) => ({
       id: model.slug,
@@ -1121,6 +1215,15 @@ function App() {
     Math.max(powerSliderOptions.length - 1, 0),
   )
   const selectedPowerOption = powerSliderOptions[reasoningEffort]
+  const paidModelSelectionError = !isPaidExperience
+    ? null
+    : !accountRuntime
+      ? '正在同步此账号的可用模型，请稍后重试；消息尚未发送。'
+      : !(effectivePlusMode === 'work' ? accountRuntime.work : accountRuntime.chat).available
+        ? '账号模型目录暂时不可用，请稍后重试；消息尚未发送。'
+        : !selectedPowerOption?.modelSlug
+          ? '当前账号没有返回此模式可用的模型端点；消息尚未发送。'
+          : null
   const effectiveReasoningLabel = selectedPowerOption?.label ?? ''
   const configuredServiceTier = activeConversationId
     ? conversationServiceTiers[activeConversationId]
@@ -1442,16 +1545,16 @@ function App() {
       windowDurationMins: null,
       resetsAt: null,
     })
-    // Match the account's normal Chat endpoint: Plus defaults to its highest
-    // Thinking preset, while Pro defaults to the dedicated right-most Pro lane.
+    // Initialize only the visual index. The authenticated request remains
+    // blocked until this account's runtime catalog supplies the exact model.
     setPlusModel('default')
     setChatReasoningEffort(preferredPowerIndex(
-      fallbackPowerOptions('chat', nextPlan, 'default'),
+      fallbackPowerOptions('chat', 'default'),
       'chat',
       nextPlan,
     ))
     setWorkReasoningEffort(preferredPowerIndex(
-      fallbackPowerOptions('work', nextPlan, 'default'),
+      fallbackPowerOptions('work', 'default'),
       'work',
       nextPlan,
     ))
@@ -1657,8 +1760,9 @@ function App() {
           })
         : current)
     } catch {
-      // Runtime capabilities are an enhancement. Login remains usable with the
-      // static plan-safe fallback if the upstream models endpoint is unavailable.
+      // Keep the authenticated shell available, but never submit paid traffic
+      // with a static model guess. The composer guard reports that the
+      // account-scoped model catalog is not ready and a later refresh can retry.
     }
   }, [loadConversationList, loadWorkspaceUsage, resetAccountWorkspace])
 
@@ -2320,6 +2424,21 @@ function App() {
     const text = raw.trim()
     const attachmentSnapshot = [...attachments]
     if ((!text && attachmentSnapshot.length === 0) || generationAbortRef.current) return
+    if (paidModelSelectionError) {
+      if (sessionAccount) {
+        void loadAccountRuntime(sessionRequestVersionRef.current, sessionAccount)
+      }
+      notify(paidModelSelectionError)
+      return
+    }
+
+    const requestModel = isPaidExperience
+      ? plusRequestModel(plusModel, reasoningEffort, effectivePlusMode, accountRuntime, selectedPowerOption)
+      : (accountRuntime?.conversation.defaultModel || accountRuntime?.chat.defaultModel || 'gpt-5-6')
+    if (!requestModel) {
+      notify('当前选择没有账号目录确认的模型端点；消息尚未发送。')
+      return
+    }
 
     const createdAt = new Date().toISOString()
     const userTurn: Turn = {
@@ -2340,9 +2459,6 @@ function App() {
     const controller = new AbortController()
     const requestVersionAtSubmit = sessionRequestVersionRef.current
     const upstreamConversationId = upstreamConversationIdsRef.current.get(conversationKey)
-    const requestModel = isPaidExperience
-      ? plusRequestModel(plusModel, reasoningEffort, effectivePlusMode, accountRuntime, selectedPowerOption)
-      : (accountRuntime?.conversation.defaultModel || accountRuntime?.chat.defaultModel || 'gpt-5-6')
     // The selected endpoint preset is authoritative. Instant presets omit
     // the field; Thinking/Pro presets provide the exact upstream effort value.
     const requestReasoningEffort = isPaidExperience
@@ -2676,6 +2792,13 @@ function App() {
     const text = (typeof payload === 'string' ? payload : payload.text).trim()
     const attachments = typeof payload === 'string' ? selectedAttachments : [...payload.attachments]
     if (!text && attachments.length === 0) return
+    if (paidModelSelectionError) {
+      if (sessionAccount) {
+        void loadAccountRuntime(sessionRequestVersionRef.current, sessionAccount)
+      }
+      notify(paidModelSelectionError)
+      return
+    }
     let conversationId = activeConversationId
     const createdConversation = !conversationId
     if (!conversationId) {

@@ -14,7 +14,7 @@ import time
 import uuid
 from json import JSONDecodeError
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Callable, Literal
 from urllib.parse import urlsplit
 
@@ -744,6 +744,12 @@ AUTH_IMAGES = AuthenticatedImageRegistry(
     ttl_seconds=_bounded_env_int("CHATGPT_IMAGE_JOB_TTL", 7_200, 300, 86_400),
     max_jobs=_bounded_env_int("CHATGPT_IMAGE_MAX_JOBS", 128, 1, 2_048),
     max_assets=_bounded_env_int("CHATGPT_IMAGE_MAX_ASSETS", 512, 1, 8_192),
+)
+AUTH_HANDOFF_POLL_TIMEOUT_SECONDS = _bounded_env_int(
+    "CHATGPT_AUTH_HANDOFF_POLL_TIMEOUT", 90, 5, 300
+)
+AUTH_HANDOFF_POLL_INTERVAL_MS = _bounded_env_int(
+    "CHATGPT_AUTH_HANDOFF_POLL_INTERVAL_MS", 750, 200, 5_000
 )
 IMAGE_TASKS: set[asyncio.Task[Any]] = set()
 
@@ -2432,6 +2438,115 @@ def _upload_authenticated_attachment(
     raise AssertionError("unreachable authenticated upload retry state")
 
 
+_FINISHED_HISTORY_MESSAGE_STATUSES = frozenset(
+    {"finished_successfully", "finished", "complete", "completed"}
+)
+_TRANSIENT_HANDOFF_HISTORY_STATUSES = frozenset(
+    {404, 408, 425, 429, 500, 502, 503, 504}
+)
+
+
+def _recover_authenticated_handoff(
+    account_entry: LocalAuthEntry,
+    session: AuthenticatedProtocolSession,
+    result: AuthenticatedChatResult,
+) -> AuthenticatedChatResult:
+    """Recover an already-submitted WS handoff through safe history reads."""
+
+    last_user_id = result.conversation_state.get("lastUserMessageId")
+    if not isinstance(last_user_id, str) or not last_user_id:
+        raise AuthenticatedProtocolError(
+            "authenticated_handoff_state_invalid",
+            "The submitted authenticated conversation could not be recovered.",
+            stage="conversation_resume",
+            retryable=False,
+        )
+
+    deadline = time.monotonic() + AUTH_HANDOFF_POLL_TIMEOUT_SECONDS
+    last_candidate: tuple[str, str, str] | None = None
+    stable_observations = 0
+    while time.monotonic() < deadline:
+        try:
+            detail = _history_read_with_refresh(
+                account_entry,
+                lambda credential: AUTH_HISTORY_BRIDGE.get_conversation(
+                    credential,
+                    result.conversation_id,
+                ),
+            )
+        except AuthSessionError as error:
+            if error.status_code not in _TRANSIENT_HANDOFF_HISTORY_STATUSES:
+                raise
+        else:
+            user_index = next(
+                (
+                    index
+                    for index, message in enumerate(detail.messages)
+                    if message.role == "user" and message.upstream_id == last_user_id
+                ),
+                -1,
+            )
+            candidate = next(
+                (
+                    message
+                    for message in reversed(detail.messages[user_index + 1 :])
+                    if user_index >= 0
+                    and message.role == "assistant"
+                    and message.content.strip()
+                ),
+                None,
+            )
+            if candidate is not None:
+                signature = (
+                    candidate.upstream_id,
+                    candidate.content,
+                    detail.current_node,
+                )
+                if signature == last_candidate:
+                    stable_observations += 1
+                else:
+                    last_candidate = signature
+                    stable_observations = 1
+                finished = candidate.status.casefold() in (
+                    _FINISHED_HISTORY_MESSAGE_STATUSES
+                )
+                # Older history shapes omit status. Require two identical
+                # observations before accepting them so a growing partial
+                # assistant message is not returned as the final answer.
+                if finished or (not candidate.status and stable_observations >= 2):
+                    state = {
+                        **result.conversation_state,
+                        "parentMessageId": detail.current_node,
+                        "lastAssistantMessageId": candidate.upstream_id,
+                        "transportHandoffPending": False,
+                        "streamComplete": True,
+                    }
+                    with session.lock:
+                        session.conversation_id = detail.upstream_id
+                        session.parent_message_id = detail.current_node
+                        session.conversation_state = state
+                        session.last_used_monotonic = time.monotonic()
+                    return replace(
+                        result,
+                        answer=candidate.content,
+                        conversation_id=detail.upstream_id,
+                        conversation_state=state,
+                        parent_message_id=detail.current_node,
+                        assistant_message_id=candidate.upstream_id,
+                    )
+
+        wait_seconds = AUTH_HANDOFF_POLL_INTERVAL_MS / 1000
+        time.sleep(min(wait_seconds, max(0.0, deadline - time.monotonic())))
+
+    raise AuthenticatedProtocolError(
+        "authenticated_handoff_recovery_timeout",
+        "The submitted authenticated conversation did not finish in time.",
+        stage="conversation_resume",
+        retryable=False,
+        upstream_request_id=result.upstream_request_id,
+    )
+
+
 def _execute_authenticated_chat(
     prompt: str,
     attachments: tuple[IncomingAttachment, ...],
@@ -2497,6 +2612,10 @@ def _execute_authenticated_chat(
             user_message=user_message,
             system_hints=system_hints,
         )
+        if result.conversation_state.get("transportHandoffPending") and not (
+            system_hints and "picture_v2" in system_hints
+        ):
+            result = _recover_authenticated_handoff(account_entry, session, result)
         return conversation_id, session, result
 
     credential = ensure_fresh_credential(
@@ -2540,6 +2659,10 @@ def _execute_authenticated_chat(
             user_message=user_message,
             system_hints=system_hints,
         )
+        if result.conversation_state.get("transportHandoffPending") and not (
+            system_hints and "picture_v2" in system_hints
+        ):
+            result = _recover_authenticated_handoff(account_entry, session, result)
         local_id = AUTH_CONVERSATIONS.put(session, owner=owner)
         return local_id, session, result
     except Exception:

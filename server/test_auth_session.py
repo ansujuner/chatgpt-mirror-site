@@ -141,7 +141,67 @@ class AccountBindingTests(unittest.TestCase):
         self.assertEqual(runtime["planLabel"], "Pro")
         self.assertEqual(runtime["features"], ["feature-pro"])
         self.assertEqual(runtime["chat"]["models"], [])
+        self.assertFalse(runtime["chat"]["available"])
+        self.assertIsNone(entry.runtime_snapshot)
         self.assertEqual(entry.account.plan, "pro")
+
+    def test_work_catalog_failure_is_explicit_and_not_cached(self) -> None:
+        entry = _entry(plan="plus")
+
+        def request_json(_http, _url, *, stage, **_kwargs):  # type: ignore[no-untyped-def]
+            if stage == "accounts_runtime":
+                return {
+                    "accounts": {
+                        "account-selected": {"account": {"plan_type": "plus"}}
+                    }
+                }
+            if stage == "models":
+                return {
+                    "default_model_slug": "gpt-5-6",
+                    "models": [{"slug": "gpt-5-6"}],
+                }
+            if stage == "work_models":
+                raise AuthSessionError("upstream_error", "work unavailable", status_code=503)
+            return {}
+
+        with (
+            patch.object(auth_session, "_new_http_session", return_value=_HTTP()),
+            patch.object(auth_session, "_request_json", side_effect=request_json),
+        ):
+            runtime = auth_session.fetch_account_runtime(entry, cache_ttl_seconds=0)
+
+        self.assertTrue(runtime["chat"]["available"])
+        self.assertFalse(runtime["work"]["available"])
+        self.assertIsNone(entry.runtime_snapshot)
+        self.assertEqual(entry.runtime_cached_at_monotonic, 0.0)
+
+    def test_conversation_init_omits_unspecified_model_and_origin(self) -> None:
+        entry = _entry(plan="plus")
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def request_json(_http, _url, *, stage, **kwargs):  # type: ignore[no-untyped-def]
+            calls.append((stage, kwargs))
+            if stage == "accounts_runtime":
+                return {
+                    "accounts": {
+                        "account-selected": {"account": {"plan_type": "plus"}}
+                    }
+                }
+            return {}
+
+        with (
+            patch.object(auth_session, "_new_http_session", return_value=_HTTP()),
+            patch.object(auth_session, "_request_json", side_effect=request_json),
+        ):
+            auth_session.fetch_account_runtime(entry, cache_ttl_seconds=0)
+
+        init_kwargs = next(kwargs for stage, kwargs in calls if stage == "conversation_init")
+        body = init_kwargs["json_body"]
+        self.assertEqual(body["conversation_id"], None)
+        self.assertEqual(body["timezone"], "Asia/Shanghai")
+        self.assertEqual(body["timezone_offset_min"], -480)
+        self.assertNotIn("requested_default_model", body)
+        self.assertNotIn("conversation_origin", body)
 
     def test_conversation_init_extracts_blocked_feature_object_names(self) -> None:
         sanitized = auth_session._sanitize_init_payload(
@@ -171,6 +231,7 @@ class AccountBindingTests(unittest.TestCase):
                 "models": [
                     {
                         "slug": "gpt-5.6-sol-wm",
+                        "default_thinking_effort": "extended",
                         "default_service_tier": "standard",
                         "service_tier_options": [
                             {"service_tier": "standard"},
@@ -186,6 +247,21 @@ class AccountBindingTests(unittest.TestCase):
                             }
                         ],
                     }
+                ],
+                "categories": [
+                    {
+                        "category": "disabled-pro",
+                        "default_model": "gpt-5-6-pro",
+                        "model_lane": "pro",
+                        "supported_models": ["gpt-5-6-pro"],
+                        "disabled_by_admin": True,
+                    },
+                    {
+                        "category": "thinking",
+                        "default_model": "gpt-5.6-sol-wm",
+                        "model_lane": "thinking_plus_plus",
+                        "supported_models": ["gpt-5.6-sol-wm"],
+                    },
                 ],
                 "versions": [
                     {
@@ -210,17 +286,34 @@ class AccountBindingTests(unittest.TestCase):
                                 ],
                             }
                         ],
+                    },
+                    {
+                        "id": "disabled-pro",
+                        "enabled": True,
+                        "disabled": True,
+                        "intelligence_presets": [
+                            {
+                                "id": 9,
+                                "model_slug": "gpt-5-6-pro",
+                                "lane": "pro",
+                                "preset_type": "available",
+                            }
+                        ],
                     }
                 ],
             }
         )
 
+        self.assertTrue(sanitized["available"])
         effort = sanitized["models"][0]["thinkingEfforts"][0]
         self.assertEqual(effort["fullLabel"], "High reasoning")
         self.assertEqual(effort["mobileFullLabel"], "High")
         model = sanitized["models"][0]
+        self.assertEqual(model["defaultThinkingEffort"], "extended")
         self.assertEqual(model["defaultServiceTier"], "standard")
         self.assertEqual(model["serviceTierOptions"], ["standard", "fast"])
+        self.assertFalse(sanitized["categories"][0]["enabled"])
+        self.assertTrue(sanitized["categories"][1]["enabled"])
         version = sanitized["versions"][0]
         self.assertEqual(version["intelligenceDisplayText"], "GPT-5.6")
         self.assertEqual(version["shortIntelligenceDisplayText"], "5.6")
@@ -229,6 +322,7 @@ class AccountBindingTests(unittest.TestCase):
         self.assertEqual(preset["upgradePlanType"], "pro")
         self.assertEqual(preset["defaultServiceTier"], "standard")
         self.assertEqual(preset["serviceTierOptions"], ["standard", "fast"])
+        self.assertFalse(sanitized["versions"][1]["enabled"])
 
     def test_refresh_invalidates_entitlement_snapshot(self) -> None:
         entry = _entry(cookie=True, plan="free")

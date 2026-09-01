@@ -2697,7 +2697,9 @@ def _feature_name_list(value: Any, *, maximum: int = 256) -> list[str]:
     return names
 
 
-def _sanitize_models_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _sanitize_models_payload(
+    payload: Mapping[str, Any], *, available: bool = True
+) -> dict[str, Any]:
     categories: list[dict[str, Any]] = []
     raw_categories = payload.get("categories")
     if isinstance(raw_categories, list):
@@ -2712,6 +2714,17 @@ def _sanitize_models_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                     "shortName": _string_at(raw, "human_category_short_name", "shortName"),
                     "subscriptionLevel": _string_at(raw, "subscription_level", "subscriptionLevel"),
                     "modelLane": _string_at(raw, "model_lane", "modelLane"),
+                    # The web catalog can keep an otherwise valid category in
+                    # the response while disabling it for the current
+                    # workspace.  Preserve the effective availability instead
+                    # of letting the frontend infer entitlement from the model
+                    # slug alone.
+                    "enabled": not (
+                        raw.get("enabled") is False
+                        or raw.get("disabled") is True
+                        or raw.get("disabled_by_admin") is True
+                        or raw.get("disabledByAdmin") is True
+                    ),
                     "supportedModels": _string_list(raw.get("supported_models")),
                     "supportedFeatures": _string_list(raw.get("supported_features")),
                 }
@@ -2748,6 +2761,9 @@ def _sanitize_models_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                     "reasoningType": _string_at(raw, "reasoning_type", "reasoningType"),
                     "configurableThinkingEffort": raw.get("configurable_thinking_effort") is True,
                     "thinkingEfforts": efforts,
+                    "defaultThinkingEffort": _string_at(
+                        raw, "default_thinking_effort", "defaultThinkingEffort"
+                    ),
                     "defaultServiceTier": _string_at(
                         raw, "default_service_tier", "defaultServiceTier"
                     ),
@@ -2800,13 +2816,18 @@ def _sanitize_models_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                     "shortIntelligenceDisplayText": _string_at(
                         raw, "short_display_text_for_intelligence"
                     ),
-                    "enabled": raw.get("enabled") is not False,
+                    # Current payloads may use either `enabled: false` or the
+                    # separate `disabled: true` flag.  Both make every preset
+                    # in this version ineligible for an authenticated request.
+                    "enabled": raw.get("enabled") is not False
+                    and raw.get("disabled") is not True,
                     "slugs": _string_list(raw.get("slugs")),
                     "presets": presets,
                 }
             )
 
     return {
+        "available": available,
         "defaultModel": _string_at(payload, "default_model_slug", "defaultModel"),
         "title": _string_at(payload, "title"),
         "secondaryTitle": _string_at(payload, "secondary_title", "secondaryTitle"),
@@ -2876,6 +2897,7 @@ def fetch_account_runtime(
                 else:
                     accounts_payload = {}
 
+            chat_catalog_available = True
             try:
                 chat_models = _request_json(
                     http, MODELS_ENDPOINT, headers=headers, stage="models"
@@ -2886,13 +2908,16 @@ def fetch_account_runtime(
                 # has just authenticated the selected account successfully.
                 # Do not turn that into a destructive local logout.
                 chat_models = {}
+                chat_catalog_available = False
 
+            work_catalog_available = True
             try:
                 work_models = _request_json(
                     http, WORK_MODELS_ENDPOINT, headers=headers, stage="work_models"
                 )
             except AuthSessionError:
                 work_models = {}
+                work_catalog_available = False
 
             try:
                 init_payload = _request_json(
@@ -2902,11 +2927,12 @@ def fetch_account_runtime(
                     stage="conversation_init",
                     method="POST",
                     json_body={
-                        "requested_default_model": None,
+                        # The official new-thread request omits an unspecified
+                        # requested model and origin; JSON null/an arbitrary URL
+                        # is rejected by the current schema for some accounts.
                         "conversation_id": None,
                         "timezone": "Asia/Shanghai",
                         "timezone_offset_min": -480,
-                        "conversation_origin": "https://chatgpt.com/",
                     },
                 )
             except AuthSessionError:
@@ -2937,12 +2963,23 @@ def fetch_account_runtime(
             "plan": entry.account.plan,
             "planLabel": entry.account.plan_label,
             "features": features,
-            "chat": _sanitize_models_payload(chat_models),
-            "work": _sanitize_models_payload(work_models),
+            "chat": _sanitize_models_payload(
+                chat_models, available=chat_catalog_available
+            ),
+            "work": _sanitize_models_payload(
+                work_models, available=work_catalog_available
+            ),
             "conversation": _sanitize_init_payload(init_payload),
         }
-        entry.runtime_snapshot = runtime
-        entry.runtime_cached_at_monotonic = time.monotonic()
+        # Never pin a transient Chat or Work models failure for the normal five-minute
+        # entitlement TTL.  Return the explicit unavailable state to this
+        # request, then let the next runtime fetch retry immediately.
+        if chat_catalog_available and work_catalog_available:
+            entry.runtime_snapshot = runtime
+            entry.runtime_cached_at_monotonic = time.monotonic()
+        else:
+            entry.runtime_snapshot = None
+            entry.runtime_cached_at_monotonic = 0.0
         return runtime
 
 
