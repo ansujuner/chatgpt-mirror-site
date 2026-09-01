@@ -758,6 +758,77 @@ class AuthenticatedApplicationTests(unittest.TestCase):
         upload.assert_not_called()
         self.assertIsNone(run_turn.call_args.kwargs["user_message"])
 
+    def test_image_generation_upload_uses_images_composer_wire_shape(self) -> None:
+        class HTTP:
+            def close(self) -> None:
+                pass
+
+        owner = application.AUTH_REGISTRY.owner_key(self.handle)
+        protocol_session = AuthenticatedProtocolSession(
+            http=HTTP(),
+            access_token="test-access-token",
+            account_id="account-pro",
+            user_id="user-pro",
+        )
+        attachment = application.IncomingAttachment(
+            file_name="reference.png",
+            mime_type="image/png",
+            file_bytes=b"png",
+            width=320,
+            height=200,
+        )
+        result = AuthenticatedChatResult(
+            answer="",
+            conversation_id="upstream-secret",
+            conversation_state={},
+            parent_message_id="assistant-image",
+            assistant_message_id="assistant-image",
+            upstream_request_id=None,
+            attempts=1,
+            model="gpt-5-6",
+            image_generation_pending=True,
+        )
+        reference = {
+            "id": "file_upstream_secret",
+            "size": 3,
+            "name": "reference.png",
+            "mime_type": "image/png",
+            "width": 320,
+            "height": 200,
+            "source": "local",
+            "is_big_paste": False,
+        }
+        with (
+            patch.object(application.AUTH_BRIDGE, "create_session", return_value=protocol_session),
+            patch.object(application.AUTH_FILES, "upload", return_value=reference) as upload,
+            patch.object(application.AUTH_BRIDGE, "run_turn", return_value=result) as run_turn,
+        ):
+            application._execute_authenticated_chat(
+                "make a variant",
+                (attachment,),
+                None,
+                owner,
+                self.entry,
+                model="gpt-5-6",
+                reasoning_effort=None,
+                service_tier=None,
+                system_hints=("picture_v2",),
+                attachment_entry_surface="image_gen_upload_input",
+            )
+
+        self.assertEqual(
+            upload.call_args.kwargs["entry_surface"], "image_gen_upload_input"
+        )
+        message = run_turn.call_args.kwargs["user_message"]
+        self.assertEqual(
+            message["metadata"]["attachments"][0]["id"],
+            "file_upstream_secret",
+        )
+        self.assertEqual(
+            message["content"]["parts"][0]["asset_pointer"],
+            "sediment://file_upstream_secret",
+        )
+
     def test_file_upload_retries_once_only_after_upstream_401(self) -> None:
         class HTTP:
             def close(self) -> None:

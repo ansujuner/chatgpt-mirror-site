@@ -316,6 +316,147 @@
   font-weight: 400;
 }
 
+.images-results-section {
+  margin-top: 52px;
+  padding-inline: 16px;
+}
+
+.images-results-heading {
+  display: flex;
+  min-height: 28px;
+  margin-bottom: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.images-results-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 26px;
+}
+
+.images-results-heading span {
+  color: #737373;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.images-generation-error {
+  display: flex;
+  min-height: 52px;
+  padding: 12px 14px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(185, 28, 28, .2);
+  border-radius: 14px;
+  color: #991b1b;
+  background: #fff7f7;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.images-generation-error button {
+  min-width: 56px;
+  height: 32px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: #0d0d0d;
+  cursor: pointer;
+}
+
+.images-generation-error button:disabled {
+  cursor: default;
+  opacity: .45;
+}
+
+.images-generation-skeleton {
+  position: relative;
+  display: grid;
+  width: min(100%, 520px);
+  aspect-ratio: 1;
+  margin-inline: auto;
+  place-items: center;
+  border-radius: 22px;
+  color: #666;
+  background: linear-gradient(110deg, #f1f1f1 8%, #fafafa 18%, #f1f1f1 33%);
+  background-size: 200% 100%;
+  overflow: hidden;
+  animation: images-result-shimmer 1.6s linear infinite;
+}
+
+.images-generation-skeleton span {
+  width: 42px;
+  height: 42px;
+  border: 3px solid rgba(0, 0, 0, .14);
+  border-top-color: #0d0d0d;
+  border-radius: 50%;
+  animation: images-spin .8s linear infinite;
+}
+
+.images-generation-skeleton p {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  left: 16px;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+}
+
+.images-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.images-result-card {
+  min-width: 0;
+  border: 1px solid rgba(0, 0, 0, .08);
+  border-radius: 22px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.images-result-card > a {
+  display: block;
+  aspect-ratio: 1;
+  background: #f3f3f3;
+  overflow: hidden;
+}
+
+.images-result-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.images-result-actions {
+  display: flex;
+  height: 46px;
+  padding-inline: 14px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #737373;
+  font-size: 13px;
+}
+
+.images-result-actions a {
+  color: inherit;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.images-result-actions a:hover {
+  color: var(--text, #0d0d0d);
+}
+
 .images-gallery-section {
   margin-top: 55px;
   padding-inline: 16px;
@@ -480,6 +621,10 @@
 
 @keyframes images-spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes images-result-shimmer {
+  to { background-position-x: -200%; }
 }
 
 @keyframes images-mic-pulse {
@@ -923,6 +1068,20 @@
     margin-bottom: 21px;
   }
 
+  .images-results-section {
+    margin-top: 42px;
+  }
+
+  .images-results-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .images-results-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .images-gallery-wrap {
     --images-card-width: calc((100% - 12px) / 2);
     max-height: 880px;
@@ -995,6 +1154,28 @@
 
 :root[data-theme='dark'] .images-card-inner {
   background: #2f2f2f;
+}
+
+:root[data-theme='dark'] .images-result-card {
+  border-color: rgba(255, 255, 255, .1);
+  background: #2f2f2f;
+}
+
+:root[data-theme='dark'] .images-result-card > a,
+:root[data-theme='dark'] .images-generation-skeleton {
+  background: linear-gradient(110deg, #292929 8%, #363636 18%, #292929 33%);
+  background-size: 200% 100%;
+}
+
+:root[data-theme='dark'] .images-generation-error {
+  border-color: rgba(248, 113, 113, .28);
+  color: #fecaca;
+  background: rgba(127, 29, 29, .22);
+}
+
+:root[data-theme='dark'] .images-generation-error button {
+  color: #0d0d0d;
+  background: #ececec;
 }
 
 :root[data-theme='dark'] .images-gate-scrim {

@@ -15,6 +15,7 @@
     "test:auth": "node --experimental-strip-types --test qa/auth-state.test.ts qa/auth-flow.test.ts qa/session-login.test.ts qa/chat-identity.test.ts",
     "test:guest": "node --experimental-strip-types --test qa/guest-conversation.test.ts",
     "test:history": "node --experimental-strip-types --test qa/conversation-history.test.ts",
+    "test:images": "node --experimental-strip-types --test qa/image-transport.test.ts",
     "test:usage": "node --experimental-strip-types --test qa/codex-usage-details.test.ts",
     "preview": "vite preview"
   },

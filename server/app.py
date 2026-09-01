@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -56,6 +56,11 @@ from .authenticated_protocol import (
     AuthenticatedProtocolBridge,
     AuthenticatedProtocolError,
     AuthenticatedProtocolSession,
+)
+from .authenticated_images import (
+    AuthenticatedImageRegistry,
+    AuthenticatedImagesBridge,
+    ImageGenerationCancelled,
 )
 from .authenticated_files import (
     AuthenticatedFilesBridge,
@@ -734,6 +739,13 @@ AUTH_HISTORY = AuthenticatedHistoryRegistry(
     max_entries=_bounded_env_int("CHATGPT_AUTH_HISTORY_MAX_BINDINGS", 4096, 28, 50_000),
     max_cursors=_bounded_env_int("CHATGPT_AUTH_HISTORY_MAX_CURSORS", 1024, 8, 10_000),
 )
+AUTH_IMAGES_BRIDGE = AuthenticatedImagesBridge()
+AUTH_IMAGES = AuthenticatedImageRegistry(
+    ttl_seconds=_bounded_env_int("CHATGPT_IMAGE_JOB_TTL", 7_200, 300, 86_400),
+    max_jobs=_bounded_env_int("CHATGPT_IMAGE_MAX_JOBS", 128, 1, 2_048),
+    max_assets=_bounded_env_int("CHATGPT_IMAGE_MAX_ASSETS", 512, 1, 8_192),
+)
+IMAGE_TASKS: set[asyncio.Task[Any]] = set()
 
 
 def _remove_owner_conversations(owner: str) -> None:
@@ -742,6 +754,7 @@ def _remove_owner_conversations(owner: str) -> None:
     REGISTRY.remove_owner(owner)
     AUTH_CONVERSATIONS.remove_owner(owner)
     AUTH_HISTORY.remove_owner(owner)
+    AUTH_IMAGES.remove_owner(owner)
 
 
 AUTH_REGISTRY = AuthSessionRegistry(on_remove=_remove_owner_conversations)
@@ -756,15 +769,33 @@ AUTH_UPSTREAM_SEMAPHORE = asyncio.Semaphore(
 AUTH_HISTORY_SEMAPHORE = asyncio.Semaphore(
     _bounded_env_int("CHATGPT_AUTH_HISTORY_MAX_CONCURRENCY", 1, 1, 4)
 )
+IMAGE_UPSTREAM_SEMAPHORE = asyncio.Semaphore(
+    _bounded_env_int("CHATGPT_IMAGE_MAX_CONCURRENCY", 1, 1, 2)
+)
+IMAGE_ASSET_SEMAPHORE = asyncio.Semaphore(
+    _bounded_env_int("CHATGPT_IMAGE_ASSET_MAX_CONCURRENCY", 2, 1, 8)
+)
+IMAGE_MAX_ACTIVE_TASKS = _bounded_env_int(
+    "CHATGPT_IMAGE_MAX_ACTIVE_TASKS", 4, 1, 32
+)
+IMAGE_MAX_ACTIVE_PER_OWNER = _bounded_env_int(
+    "CHATGPT_IMAGE_MAX_ACTIVE_PER_OWNER", 1, 1, 4
+)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
+    tasks = list(IMAGE_TASKS)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
     PROVIDER_LOGINS.close()
     REGISTRY.close_all()
     AUTH_CONVERSATIONS.close_all()
     AUTH_HISTORY.clear()
+    AUTH_IMAGES.clear()
     AUTH_REGISTRY.close_all()
 
 
@@ -851,6 +882,7 @@ async def _limit_chat_request_body(
     is_chat = request.method == "POST" and request.url.path in {
         "/api/chat/completions",
         "/api/chat/authenticated/completions",
+        "/api/images/generations",
     }
     is_settings = request.method == "PATCH" and request.url.path in {
         "/api/account/settings",
@@ -2375,6 +2407,7 @@ def _upload_authenticated_attachment(
     attachment: IncomingAttachment,
     *,
     model: str,
+    entry_surface: str | None = None,
 ) -> dict[str, Any]:
     """Upload one file, refreshing only after a real upstream 401."""
 
@@ -2388,6 +2421,7 @@ def _upload_authenticated_attachment(
                 width=attachment.width,
                 height=attachment.height,
                 model_slug=model,
+                entry_surface=entry_surface,
             )
         except AuthenticatedProtocolError as error:
             if attempt or error.upstream_status != 401:
@@ -2408,6 +2442,8 @@ def _execute_authenticated_chat(
     model: str,
     reasoning_effort: str | None,
     service_tier: str | None,
+    system_hints: tuple[str, ...] | None = None,
+    attachment_entry_surface: str | None = None,
 ) -> tuple[str, AuthenticatedProtocolSession, AuthenticatedChatResult]:
     selected_model = model.strip()
     if selected_model in {"", "auto", "chatgpt-guest"}:
@@ -2433,13 +2469,21 @@ def _execute_authenticated_chat(
         _bind_authenticated_credential(session, account_entry)
         references = [
             _upload_authenticated_attachment(
-                session, account_entry, attachment, model=selected_model
+                session,
+                account_entry,
+                attachment,
+                model=selected_model,
+                entry_surface=attachment_entry_surface,
             )
             for attachment in attachments
         ]
         user_message = (
             build_user_message_with_file_references(
-                prompt, str(uuid.uuid4()), references
+                prompt,
+                str(uuid.uuid4()),
+                references,
+                include_attachments=True,
+                include_image_pointers=True,
             )
             if references
             else None
@@ -2451,6 +2495,7 @@ def _execute_authenticated_chat(
             reasoning_effort=reasoning_effort,
             service_tier=service_tier,
             user_message=user_message,
+            system_hints=system_hints,
         )
         return conversation_id, session, result
 
@@ -2467,13 +2512,21 @@ def _execute_authenticated_chat(
     try:
         references = [
             _upload_authenticated_attachment(
-                session, account_entry, attachment, model=selected_model
+                session,
+                account_entry,
+                attachment,
+                model=selected_model,
+                entry_surface=attachment_entry_surface,
             )
             for attachment in attachments
         ]
         user_message = (
             build_user_message_with_file_references(
-                prompt, str(uuid.uuid4()), references
+                prompt,
+                str(uuid.uuid4()),
+                references,
+                include_attachments=True,
+                include_image_pointers=True,
             )
             if references
             else None
@@ -2485,6 +2538,7 @@ def _execute_authenticated_chat(
             reasoning_effort=reasoning_effort,
             service_tier=service_tier,
             user_message=user_message,
+            system_hints=system_hints,
         )
         local_id = AUTH_CONVERSATIONS.put(session, owner=owner)
         return local_id, session, result
@@ -2799,6 +2853,361 @@ async def conversation_history_detail(
             "continuationId": continuation_id,
         },
         headers={"Cache-Control": "no-store"},
+    )
+
+
+def _image_api_error(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status,
+        content={"error": {"code": code, "message": message}},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _image_job_dto(job: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": job.id,
+        "status": job.status,
+        "message": job.message,
+        "images": [
+            {
+                "id": image.id,
+                "url": f"/api/images/assets/{image.id}",
+                "width": image.width,
+                "height": image.height,
+                "mimeType": image.mime_type,
+                "prompt": image.prompt,
+            }
+            for image in job.images
+        ],
+    }
+    if job.conversation_id:
+        payload["conversationId"] = job.conversation_id
+    if job.error_code:
+        payload["error"] = {"code": job.error_code, "message": job.message}
+    return payload
+
+
+def _execute_image_generation_job(
+    *,
+    local_handle: str,
+    owner: str,
+    account_entry: LocalAuthEntry,
+    job_id: str,
+    prompt: str,
+    attachments: tuple[IncomingAttachment, ...],
+    model: str,
+    reasoning_effort: str | None,
+) -> None:
+    if AUTH_IMAGES.is_cancelled(owner, job_id):
+        raise ImageGenerationCancelled()
+    if AUTH_REGISTRY.get(local_handle) is not account_entry:
+        raise ImageGenerationCancelled()
+
+    public_conversation_id, protocol_session, result = _execute_authenticated_chat(
+        prompt,
+        attachments,
+        None,
+        owner,
+        account_entry,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        service_tier=None,
+        system_hints=("picture_v2",),
+        attachment_entry_surface="image_gen_upload_input",
+    )
+    if AUTH_REGISTRY.get(local_handle) is not account_entry:
+        AUTH_CONVERSATIONS.remove_owner(owner)
+        raise ImageGenerationCancelled()
+
+    images = result.images
+    if not images and result.image_generation_pending:
+        resume_token = result.conversation_state.get("resumeToken")
+        if isinstance(resume_token, str) and resume_token:
+            try:
+                resumed = AUTH_BRIDGE.resume_turn(
+                    protocol_session,
+                    conversation_id=result.conversation_id,
+                    resume_token=resume_token,
+                    offset=0,
+                )
+            except AuthenticatedProtocolError as error:
+                # Resume is an optimization over the existing account-bound
+                # history fallback. Keep the original turn authoritative when
+                # a conduit handoff expires or this account uses WebSockets.
+                LOGGER.info(
+                    "Image stream resume unavailable at %s (%s)",
+                    error.stage,
+                    error.code,
+                )
+            else:
+                result = resumed
+                images = resumed.images
+    if not images:
+        if result.image_generation_failed:
+            raise AuthSessionError(
+                "image_generation_failed",
+                "图片生成失败，请调整描述后重试。",
+                status_code=422,
+            )
+        if not result.image_generation_pending:
+            raise AuthSessionError(
+                "image_generation_no_result",
+                result.answer.strip() or "图片生成没有返回可显示的图片，请调整描述后重试。",
+                status_code=422,
+            )
+        credential = ensure_fresh_credential(
+            account_entry, minimum_validity_seconds=300
+        )
+        images = AUTH_IMAGES_BRIDGE.wait_for_images(
+            credential,
+            result.conversation_id,
+            cancelled=lambda: (
+                AUTH_IMAGES.is_cancelled(owner, job_id)
+                or AUTH_REGISTRY.get(local_handle) is not account_entry
+            ),
+        )
+    if not images:
+        raise AuthSessionError(
+            "image_generation_no_result",
+            "图片生成没有返回可显示的图片，请稍后重试。",
+            status_code=502,
+        )
+    if AUTH_REGISTRY.get(local_handle) is not account_entry:
+        AUTH_CONVERSATIONS.remove_owner(owner)
+        raise ImageGenerationCancelled()
+    AUTH_IMAGES.complete(
+        owner,
+        job_id,
+        conversation_id=public_conversation_id,
+        upstream_conversation_id=result.conversation_id,
+        images=images,
+        message=result.answer.strip() or "图片已生成",
+    )
+
+
+async def _run_image_generation_job(
+    *,
+    local_handle: str,
+    owner: str,
+    account_entry: LocalAuthEntry,
+    job_id: str,
+    prompt: str,
+    attachments: tuple[IncomingAttachment, ...],
+    model: str,
+    reasoning_effort: str | None,
+) -> None:
+    if not AUTH_IMAGES.mark_running(owner, job_id):
+        return
+    try:
+        async with IMAGE_UPSTREAM_SEMAPHORE:
+            await asyncio.to_thread(
+                _execute_image_generation_job,
+                local_handle=local_handle,
+                owner=owner,
+                account_entry=account_entry,
+                job_id=job_id,
+                prompt=prompt,
+                attachments=attachments,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
+    except ImageGenerationCancelled:
+        return
+    except AuthSessionError as error:
+        if error.status_code == 401:
+            _remove_account_state(local_handle)
+        AUTH_IMAGES.fail(
+            owner,
+            job_id,
+            code=error.code,
+            message=error.message,
+        )
+    except ProtocolError as error:
+        if error.upstream_status == 401:
+            _remove_account_state(local_handle)
+        AUTH_IMAGES.fail(
+            owner,
+            job_id,
+            code=error.code,
+            message=error.message,
+        )
+    except Exception as error:
+        LOGGER.error("Unexpected image generation failure (%s)", type(error).__name__)
+        AUTH_IMAGES.fail(
+            owner,
+            job_id,
+            code="image_generation_internal_error",
+            message="图片生成服务发生意外错误，请稍后重试。",
+        )
+
+
+@app.post("/api/images/generations", response_model=None)
+async def create_image_generation(
+    http_request: Request, request: ChatCompletionRequest
+) -> JSONResponse:
+    if not _same_origin_write(http_request):
+        return _image_api_error(403, "origin_not_allowed", "该请求来源不受信任。")
+    local_handle = http_request.cookies.get(LOCAL_SESSION_COOKIE)
+    account_entry = AUTH_REGISTRY.get(local_handle)
+    if account_entry is None or not local_handle:
+        response = _image_api_error(
+            401,
+            "authentication_required",
+            "图片生成需要先登录有效的 Session。",
+        )
+        if local_handle:
+            _expire_auth_cookie(response, http_request)
+        return response
+    try:
+        latest = _latest_user_input(request)
+    except ProtocolError as error:
+        return _image_api_error(400, error.code, error.message)
+    if len(latest.attachments) > 1 or any(
+        not attachment.mime_type.startswith("image/")
+        for attachment in latest.attachments
+    ):
+        return _image_api_error(
+            400,
+            "image_reference_invalid",
+            "图片生成最多接受一张参考图片。",
+        )
+    prompt = latest.prompt.strip()
+    owner = AUTH_REGISTRY.owner_key(local_handle)
+    # A generated-image turn can hold a decoded reference image while it waits
+    # behind the upstream semaphore. Keep that queue explicitly bounded rather
+    # than relying on registry eviction, which would leave orphan asyncio tasks.
+    IMAGE_TASKS.difference_update(task for task in tuple(IMAGE_TASKS) if task.done())
+    if len(IMAGE_TASKS) >= IMAGE_MAX_ACTIVE_TASKS:
+        return _image_api_error(
+            429,
+            "image_generation_busy",
+            "图片生成任务较多，请稍后再试。",
+        )
+    job_id = AUTH_IMAGES.try_create_job(
+        owner, max_active_per_owner=IMAGE_MAX_ACTIVE_PER_OWNER
+    )
+    if job_id is None:
+        return _image_api_error(
+            429,
+            "image_generation_in_progress",
+            "当前账号已有图片生成任务，请等待完成后再试。",
+        )
+    task = asyncio.create_task(
+        _run_image_generation_job(
+            local_handle=local_handle,
+            owner=owner,
+            account_entry=account_entry,
+            job_id=job_id,
+            prompt=prompt,
+            attachments=latest.attachments,
+            model=request.model,
+            reasoning_effort=request.reasoning_effort,
+        )
+    )
+    IMAGE_TASKS.add(task)
+    task.add_done_callback(IMAGE_TASKS.discard)
+    job = AUTH_IMAGES.get_job(owner, job_id)
+    assert job is not None
+    return JSONResponse(
+        status_code=202,
+        content=_image_job_dto(job),
+        headers={
+            "Cache-Control": "no-store",
+            "Location": f"/api/images/generations/{job_id}",
+            "X-ChatGPT-Identity-Mode": "verified-session",
+        },
+    )
+
+
+@app.get("/api/images/generations/{job_id}", response_model=None)
+async def image_generation_status(job_id: str, request: Request) -> JSONResponse:
+    local_handle = request.cookies.get(LOCAL_SESSION_COOKIE)
+    account_entry = AUTH_REGISTRY.get(local_handle)
+    if account_entry is None or not local_handle:
+        response = _image_api_error(
+            401,
+            "authentication_required",
+            "图片生成需要先登录有效的 Session。",
+        )
+        if local_handle:
+            _expire_auth_cookie(response, request)
+        return response
+    owner = AUTH_REGISTRY.owner_key(local_handle)
+    job = AUTH_IMAGES.get_job(owner, job_id)
+    if job is None:
+        return _image_api_error(404, "image_job_not_found", "图片生成任务不存在或已过期。")
+    return JSONResponse(
+        status_code=200,
+        content=_image_job_dto(job),
+        headers={
+            "Cache-Control": "no-store",
+            "X-ChatGPT-Identity-Mode": "verified-session",
+        },
+    )
+
+
+def _download_registered_image(
+    account_entry: LocalAuthEntry, asset_entry: Any
+) -> Any:
+    refreshed = False
+    while True:
+        credential = ensure_fresh_credential(
+            account_entry, minimum_validity_seconds=120
+        )
+        try:
+            return AUTH_IMAGES_BRIDGE.download_image(
+                credential,
+                asset_entry.asset,
+                asset_entry.upstream_conversation_id,
+            )
+        except AuthSessionError as error:
+            if error.status_code != 401 or refreshed:
+                raise
+            refreshed = True
+            refresh_local_auth_entry(account_entry)
+
+
+@app.get("/api/images/assets/{asset_id}", response_model=None)
+async def generated_image_asset(asset_id: str, request: Request) -> Response:
+    local_handle = request.cookies.get(LOCAL_SESSION_COOKIE)
+    account_entry = AUTH_REGISTRY.get(local_handle)
+    if account_entry is None or not local_handle:
+        response = _image_api_error(401, "authentication_required", "请先登录后查看图片。")
+        if local_handle:
+            _expire_auth_cookie(response, request)
+        return response
+    owner = AUTH_REGISTRY.owner_key(local_handle)
+    asset_entry = AUTH_IMAGES.get_asset(owner, asset_id)
+    if asset_entry is None:
+        return _image_api_error(404, "image_asset_not_found", "图片资源不存在或已过期。")
+    try:
+        async with IMAGE_ASSET_SEMAPHORE:
+            downloaded = await asyncio.to_thread(
+                _download_registered_image, account_entry, asset_entry
+            )
+        if AUTH_REGISTRY.get(local_handle) is not account_entry:
+            return _image_api_error(401, "authentication_expired", "当前登录已失效。")
+    except AuthSessionError as error:
+        if error.status_code == 401:
+            _remove_account_state(local_handle)
+        return _image_api_error(error.status_code, error.code, error.message)
+    extension = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/webp": "webp",
+        "image/gif": "gif",
+        "image/avif": "avif",
+    }.get(downloaded.mime_type, "img")
+    return Response(
+        content=downloaded.body,
+        media_type=downloaded.mime_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'inline; filename="generated-image.{extension}"',
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
     )
 
 

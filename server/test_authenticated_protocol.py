@@ -124,6 +124,31 @@ class _FakeHTTP:
             return _FakeResponse(payload={"token": "sentinel-final", "expire_after": 60})
         if url.endswith("/f/conversation/prepare"):
             return _FakeResponse(payload={"status": "success", "conduit_token": "cnd"})
+        if url.endswith("/f/conversation/resume"):
+            lines = _sse_event(
+                None,
+                {
+                    "type": "message",
+                    "conversation_id": "conversation-1",
+                    "message": {
+                        "id": "image-tool-resumed",
+                        "author": {"role": "tool", "name": "t2uay3k.sj1i4kz"},
+                        "content": {
+                            "content_type": "multimodal_text",
+                            "parts": [
+                                {
+                                    "content_type": "image_asset_pointer",
+                                    "asset_pointer": "sediment://file-resumed",
+                                    "width": 1024,
+                                    "height": 1024,
+                                }
+                            ],
+                        },
+                    },
+                },
+            )
+            lines += _sse_event(None, "[DONE]")
+            return _FakeResponse(lines=lines, headers={"x-oai-request-id": "resume-1"})
         if url.endswith("/f/conversation"):
             self.turn += 1
             return _FakeResponse(
@@ -191,6 +216,174 @@ class AuthenticatedStreamParserTests(unittest.TestCase):
         self.assertEqual(parsed.answer, "legacy")
         self.assertEqual(parsed.assistant_message_id, "assistant-old")
 
+    def test_tool_only_image_message_becomes_the_continuation_parent(self) -> None:
+        lines = _sse_event(
+            None,
+            {
+                "type": "message",
+                "conversation_id": "conversation-image",
+                "message": {
+                    "id": "image-tool-1",
+                    "author": {
+                        "role": "tool",
+                        "name": "t2uay3k.sj1i4kz",
+                    },
+                    "content": {
+                        "content_type": "multimodal_text",
+                        "parts": [
+                            {
+                                "content_type": "image_asset_pointer",
+                                "asset_pointer": "sediment://file-generated",
+                                "size_bytes": 123,
+                                "width": 1254,
+                                "height": 1254,
+                            }
+                        ],
+                    },
+                    "recipient": "assistant",
+                    "status": "finished_successfully",
+                },
+            },
+        )
+        lines += _sse_event(
+            None,
+            {
+                "type": "message_stream_complete",
+                "conversation_id": "conversation-image",
+            },
+        )
+        lines += _sse_event(None, "[DONE]")
+
+        parsed = parse_authenticated_sse(lines)
+
+        self.assertEqual(parsed.answer, "")
+        self.assertEqual(parsed.parent_message_id, "image-tool-1")
+        self.assertEqual(parsed.assistant_message_id, "image-tool-1")
+        self.assertEqual(len(parsed.images), 1)
+        self.assertEqual(
+            parsed.images[0].asset_pointer, "sediment://file-generated"
+        )
+        self.assertFalse(parsed.image_generation_pending)
+
+    def test_image_tool_error_is_terminal_not_pending(self) -> None:
+        lines = _sse_event(
+            None,
+            {
+                "type": "message",
+                "conversation_id": "conversation-image-error",
+                "message": {
+                    "id": "image-tool-error",
+                    "author": {
+                        "role": "tool",
+                        "name": "t2uay3k.sj1i4kz",
+                    },
+                    "content": {
+                        "content_type": "system_error",
+                        "parts": ["private upstream error detail"],
+                    },
+                    "recipient": "assistant",
+                    "status": "finished_successfully",
+                },
+            },
+        )
+        lines += _sse_event(None, "[DONE]")
+
+        parsed = parse_authenticated_sse(lines)
+
+        self.assertEqual(parsed.parent_message_id, "image-tool-error")
+        self.assertEqual(parsed.images, ())
+        self.assertTrue(parsed.image_generation_failed)
+        self.assertFalse(parsed.image_generation_pending)
+        self.assertTrue(parsed.state["imageGenerationFailed"])
+        self.assertFalse(parsed.state["imageGenerationPending"])
+        self.assertNotIn("private upstream error detail", repr(parsed))
+
+    def test_message_patch_recomputes_async_image_failure(self) -> None:
+        lines = _sse_event(
+            None,
+            {
+                "type": "message",
+                "conversation_id": "conversation-patched-image",
+                "message": {
+                    "id": "assistant-patched-image",
+                    "author": {"role": "assistant"},
+                    "content": {"content_type": "text", "parts": ["private detail"]},
+                    "metadata": {},
+                    "recipient": "all",
+                },
+            },
+        )
+        lines += _sse_event(
+            None,
+            {
+                "type": "stream-message-patch",
+                "message_id": "assistant-patched-image",
+                "patches": [
+                    {
+                        "op": "add",
+                        "path": "/metadata/image_gen_task_id",
+                        "value": "task-private",
+                    },
+                    {
+                        "op": "add",
+                        "path": "/metadata/is_error",
+                        "value": "true",
+                    },
+                ],
+            },
+        )
+        lines += _sse_event(None, "[DONE]")
+
+        parsed = parse_authenticated_sse(lines)
+
+        self.assertTrue(parsed.image_generation_failed)
+        self.assertFalse(parsed.image_generation_pending)
+        self.assertEqual(parsed.answer, "")
+        self.assertNotIn("task-private", repr(parsed))
+
+    def test_user_uploaded_image_pointer_is_not_generation_output_or_pending(self) -> None:
+        lines = _sse_event(
+            None,
+            {
+                "type": "message",
+                "conversation_id": "conversation-upload",
+                "message": {
+                    "id": "user-upload",
+                    "author": {"role": "user"},
+                    "content": {
+                        "content_type": "multimodal_text",
+                        "parts": [
+                            {
+                                "content_type": "image_asset_pointer",
+                                "asset_pointer": "sediment://file-user-private",
+                                "size_bytes": 3,
+                                "width": 2,
+                                "height": 1,
+                            },
+                            "describe this",
+                        ],
+                    },
+                },
+            },
+        )
+        lines += _sse_event(
+            None,
+            _assistant_event(
+                "ordinary text reply",
+                "assistant-upload",
+                "conversation-upload",
+            ),
+        )
+        lines += _sse_event(None, "[DONE]")
+
+        parsed = parse_authenticated_sse(lines)
+
+        self.assertEqual(parsed.answer, "ordinary text reply")
+        self.assertEqual(parsed.parent_message_id, "assistant-upload")
+        self.assertEqual(parsed.images, ())
+        self.assertFalse(parsed.image_generation_pending)
+        self.assertFalse(parsed.image_generation_failed)
+
     def test_invalid_delta_is_a_sanitized_protocol_error(self) -> None:
         lines = _sse_event("delta_encoding", "v1")
         lines += _sse_event("delta", {"o": "unknown", "v": "secret-value"})
@@ -226,6 +419,20 @@ class AuthenticatedBridgeTests(unittest.TestCase):
         self.assertEqual(len(root_calls), 2)
         self.assertFalse(session.closed)
         sleep.assert_called_once()
+
+    def test_stream_read_failure_is_sanitized(self) -> None:
+        class BrokenResponse:
+            def iter_lines(self):
+                yield b'data: {"type":"resume_conversation_token"}'
+                raise OSError("Authorization: Bearer private-token")
+
+        bridge = self._bridge(_FakeHTTP())
+        with self.assertRaises(AuthenticatedProtocolError) as caught:
+            list(bridge._iter_limited_lines(BrokenResponse()))
+
+        self.assertEqual(caught.exception.code, "authenticated_stream_read_error")
+        self.assertFalse(caught.exception.retryable)
+        self.assertNotIn("private-token", str(caught.exception))
 
     def test_post_network_failure_is_not_replayed(self) -> None:
         fake = _FlakyHTTP(
@@ -341,6 +548,77 @@ class AuthenticatedBridgeTests(unittest.TestCase):
         for call in (prepare, submit):
             self.assertEqual(call["json"]["model"], "gpt-5-6-pro")
             self.assertEqual(call["json"]["thinking_effort"], "standard")
+
+    def test_picture_v2_hint_reaches_prepare_and_submit(self) -> None:
+        fake = _FakeHTTP()
+        bridge = self._bridge(fake)
+        session = bridge.create_session({"access_token": "valid-token"})
+
+        bridge.run_turn(
+            session,
+            "generate an image",
+            system_hints=("picture_v2",),
+        )
+
+        prepare = next(
+            call for call in fake.calls if call["url"].endswith("/f/conversation/prepare")
+        )
+        submit = next(
+            call for call in fake.calls if call["url"].endswith("/f/conversation")
+        )
+        self.assertEqual(prepare["json"]["system_hints"], ["picture_v2"])
+        self.assertEqual(submit["json"]["system_hints"], ["picture_v2"])
+        self.assertNotIn("thinking_effort", prepare["json"])
+        self.assertNotIn("thinking_effort", submit["json"])
+
+    def test_resume_turn_uses_conduit_token_without_resubmitting_prompt(self) -> None:
+        fake = _FakeHTTP()
+        bridge = self._bridge(fake)
+        session = bridge.create_session(
+            AuthenticatedCredential(
+                access_token="access-secret",
+                cookie_header="session=private",
+                account_id="account-1",
+            ),
+            model="gpt-5-6-pro",
+        )
+        session.conversation_id = "conversation-1"
+        session.parent_message_id = "assistant-dispatch"
+        session.turn_index = 1
+        session.conversation_state = {"lastUserMessageId": "user-image"}
+
+        resumed = bridge.resume_turn(
+            session,
+            conversation_id="conversation-1",
+            resume_token="resume-secret",
+            offset=0,
+        )
+
+        self.assertEqual(len(resumed.images), 1)
+        self.assertEqual(
+            resumed.images[0].asset_pointer, "sediment://file-resumed"
+        )
+        self.assertEqual(resumed.parent_message_id, "image-tool-resumed")
+        self.assertEqual(session.turn_index, 1)
+        resume = next(
+            call for call in fake.calls if call["url"].endswith("/f/conversation/resume")
+        )
+        self.assertEqual(
+            resume["json"], {"conversation_id": "conversation-1", "offset": 0}
+        )
+        self.assertEqual(resume["headers"]["x-conduit-token"], "resume-secret")
+        self.assertFalse(
+            any(call["url"].endswith("/f/conversation") for call in fake.calls)
+        )
+
+        with self.assertRaises(AuthenticatedProtocolError) as caught:
+            bridge.resume_turn(
+                session,
+                conversation_id="conversation-1",
+                resume_token="resume-secret",
+                offset=1,
+            )
+        self.assertEqual(caught.exception.code, "authenticated_resume_invalid")
 
     def test_refresh_hook_rebinds_token_and_retries_without_guest_fallback(self) -> None:
         fake = _FakeHTTP(reject_first_token=True)

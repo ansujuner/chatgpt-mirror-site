@@ -62,6 +62,7 @@ jobs:
           npm run test:auth
           npm run test:guest
           npm run test:history
+          npm run test:images
           npm run test:usage
 
       - name: Run backend tests

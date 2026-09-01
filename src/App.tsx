@@ -3228,7 +3228,12 @@ function App() {
           {!hasConversation && <p className="legal-copy">ChatGPT 是 AI。使用即表示你同意我们的<a href="/terms" target="_blank" rel="noreferrer">条款</a>和<a href="/privacy" target="_blank" rel="noreferrer">隐私政策</a>。聊天内容可能会被审核，并用于改进我们的 AI 模型。<a href="/help/data-usage" target="_blank" rel="noreferrer">了解更多</a></p>}
         </>}
 
-        {route === 'images' && <ImagesPage authenticated={isAuthenticated} onRequestAuth={() => showAuth('login_or_signup', 'images')} onNotice={notify} />}
+        {route === 'images' && <ImagesPage
+          authenticated={isAuthenticated}
+          model={accountRuntime?.conversation.defaultModel || accountRuntime?.chat.defaultModel || 'auto'}
+          onRequestAuth={() => showAuth('login_or_signup', 'images')}
+          onNotice={notify}
+        />}
 
         {isPluginRoute && <PluginsPage locationHref={locationHref} onNavigate={navigatePluginTarget} onRequestAuth={() => isAuthenticated ? notify('插件已安装') : showAuth('login_or_signup')} />}
 

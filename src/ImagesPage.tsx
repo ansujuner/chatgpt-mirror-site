@@ -9,12 +9,18 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { IMAGE_IDEAS, type ImageIdea } from './imagesData'
+import {
+  generateImage,
+  imageGenerationErrorMessage,
+  type GeneratedImage,
+} from './lib/imageTransport'
 import './ImagesPage.css'
 
 type ImagesPageProps = {
   onRequestAuth: () => void
   onNotice?: (message: string) => void
   authenticated?: boolean
+  model?: string
 }
 
 function SpriteIcon({ id, size = 20 }: { id: string; size?: number }) {
@@ -61,17 +67,22 @@ function ImageIdeaCard({ idea, index, onSelect, authenticated = false }: { idea:
   )
 }
 
-function ImagesPage({ onRequestAuth, onNotice, authenticated = false }: ImagesPageProps) {
+function ImagesPage({ onRequestAuth, onNotice, authenticated = false, model = 'auto' }: ImagesPageProps) {
   const [prompt, setPrompt] = useState('')
   const [editorLong, setEditorLong] = useState(false)
   const [editorOverflowing, setEditorOverflowing] = useState(false)
   const [manuallyExpanded, setManuallyExpanded] = useState(false)
-  const [attachmentName, setAttachmentName] = useState('')
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
   const [micState, setMicState] = useState<'idle' | 'requesting' | 'listening'>('idle')
   const [generating, setGenerating] = useState(false)
+  const [generationStatus, setGenerationStatus] = useState('')
+  const [generationError, setGenerationError] = useState('')
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const generationAbortRef = useRef<AbortController | null>(null)
+  const attachmentName = attachmentFile?.name ?? ''
 
   const sizeEditor = useCallback(() => {
     const textarea = textareaRef.current
@@ -100,6 +111,7 @@ function ImagesPage({ onRequestAuth, onNotice, authenticated = false }: ImagesPa
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop())
+    generationAbortRef.current?.abort()
   }, [])
 
   const chooseIdea = (idea: ImageIdea, index: number) => {
@@ -125,12 +137,42 @@ function ImagesPage({ onRequestAuth, onNotice, authenticated = false }: ImagesPa
     event.preventDefault()
     if (!prompt.trim() && !attachmentName) return
     if (!authenticated) { onRequestAuth(); return }
+    if (generationAbortRef.current) return
+
+    const controller = new AbortController()
+    generationAbortRef.current = controller
     setGenerating(true)
-    onNotice?.('正在使用 Plus 生成图片…')
-    window.setTimeout(() => {
+    setGenerationError('')
+    setGenerationStatus('正在创建图片任务…')
+    onNotice?.('正在使用已登录账号生成图片…')
+
+    void generateImage(prompt, {
+      file: attachmentFile,
+      model,
+      signal: controller.signal,
+      onStatus: (status) => setGenerationStatus(
+        status === 'queued' ? '图片任务正在排队…' : '正在生成图片，这可能需要一两分钟…',
+      ),
+    }).then((result) => {
+      if (generationAbortRef.current !== controller) return
+      setGeneratedImages((current) => [
+        ...result.images,
+        ...current.filter((item) => !result.images.some((image) => image.id === item.id)),
+      ])
+      setAttachmentFile(null)
+      setGenerationStatus('')
+      onNotice?.(result.message || '图片已生成')
+    }).catch((error) => {
+      if (generationAbortRef.current !== controller || controller.signal.aborted) return
+      const message = imageGenerationErrorMessage(error)
+      setGenerationStatus('')
+      setGenerationError(message)
+      onNotice?.(message)
+    }).finally(() => {
+      if (generationAbortRef.current !== controller) return
+      generationAbortRef.current = null
       setGenerating(false)
-      onNotice?.('图片生成任务已创建')
-    }, 900)
+    })
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -145,7 +187,8 @@ function ImagesPage({ onRequestAuth, onNotice, authenticated = false }: ImagesPa
   const handleFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0]
     if (!file) return
-    setAttachmentName(file.name)
+    setAttachmentFile(file)
+    setGenerationError('')
     onNotice?.(`已添加 ${file.name}`)
     event.currentTarget.value = ''
     window.setTimeout(() => textareaRef.current?.focus(), 0)
@@ -224,7 +267,7 @@ function ImagesPage({ onRequestAuth, onNotice, authenticated = false }: ImagesPa
                 <span className="images-button-tooltip" role="tooltip">添加照片</span>
               </button>
               {attachmentName && (
-                <button className="images-attachment-chip" type="button" title={attachmentName} onClick={() => setAttachmentName('')}>
+                <button className="images-attachment-chip" type="button" title={attachmentName} onClick={() => setAttachmentFile(null)}>
                   <span>{attachmentName}</span><b aria-hidden="true">×</b>
                 </button>
               )}
@@ -253,6 +296,47 @@ function ImagesPage({ onRequestAuth, onNotice, authenticated = false }: ImagesPa
           </form>
           <input ref={fileInputRef} className="sr-only" type="file" accept="image/*" tabIndex={-1} onChange={handleFile} />
         </div>
+
+        {(generating || generationError || generatedImages.length > 0) && (
+          <section className="images-results-section" aria-live="polite" aria-busy={generating}>
+            <div className="images-results-heading">
+              <h2>你的图片</h2>
+              {generationStatus && <span>{generationStatus}</span>}
+            </div>
+            {generationError && (
+              <div className="images-generation-error" role="alert">
+                <span>{generationError}</span>
+                <button type="button" disabled={!ready || generating} onClick={() => submit({ preventDefault() {} } as FormEvent)}>重试</button>
+              </div>
+            )}
+            {generating && generatedImages.length === 0 && (
+              <div className="images-generation-skeleton" aria-label="正在生成图片">
+                <span />
+                <p>{generationStatus || '正在生成图片…'}</p>
+              </div>
+            )}
+            {generatedImages.length > 0 && (
+              <div className="images-results-grid">
+                {generatedImages.map((image) => (
+                  <article className="images-result-card" key={image.id}>
+                    <a href={image.url} target="_blank" rel="noreferrer noopener" aria-label="打开生成的图片">
+                      <img
+                        src={image.url}
+                        alt={image.prompt || prompt.trim() || '生成的图片'}
+                        width={image.width ?? undefined}
+                        height={image.height ?? undefined}
+                      />
+                    </a>
+                    <div className="images-result-actions">
+                      <span>{image.width && image.height ? `${image.width} × ${image.height}` : '已生成'}</span>
+                      <a href={image.url} download>下载</a>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="images-gallery-section" aria-labelledby="images-gallery-title">
           <h2 id="images-gallery-title">生成图片</h2>

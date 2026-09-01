@@ -69,6 +69,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}" \
     NODE_ENV=production \
+    CHATGPT_AUTH_VERIFY_TLS=true \
+    CHATGPT_BRIDGE_VERIFY_TLS=true \
     XDG_CONFIG_HOME=/tmp/caddy/config \
     XDG_DATA_HOME=/tmp/caddy/data
 

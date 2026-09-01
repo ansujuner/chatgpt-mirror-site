@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol
+from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests
@@ -241,6 +241,22 @@ class AuthenticatedProtocolSession:
 
 
 @dataclass(frozen=True)
+class AuthenticatedImageAsset:
+    """Private upstream image reference recovered from a conversation stream.
+
+    ``asset_pointer`` is intentionally never returned directly to the browser.
+    The API layer replaces it with an account-bound opaque local URL.
+    """
+
+    asset_pointer: str = field(repr=False)
+    width: int | None = None
+    height: int | None = None
+    mime_type: str | None = None
+    prompt: str | None = None
+    generation_id: str | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
 class AuthenticatedChatResult:
     answer: str
     conversation_id: str
@@ -250,6 +266,9 @@ class AuthenticatedChatResult:
     upstream_request_id: str | None
     attempts: int
     model: str
+    images: tuple[AuthenticatedImageAsset, ...] = ()
+    image_generation_pending: bool = False
+    image_generation_failed: bool = False
 
 
 class AuthenticatedProtocolError(ProtocolError):
@@ -270,6 +289,9 @@ class ParsedAuthenticatedStream:
     assistant_message_id: str
     parent_message_id: str
     state: dict[str, Any]
+    images: tuple[AuthenticatedImageAsset, ...] = ()
+    image_generation_pending: bool = False
+    image_generation_failed: bool = False
 
 
 def _mapping_string(value: Mapping[str, Any], *keys: str) -> str:
@@ -730,6 +752,173 @@ def _content_text(content: Any) -> str:
     return "".join(output)
 
 
+_IMAGE_ASSET_CONTENT_TYPES = frozenset(
+    {"image_asset_pointer", "simple_image_asset_pointer"}
+)
+_IMAGE_ASSET_POINTER_PREFIXES = ("sediment://", "file-service://")
+
+
+def _clean_image_string(value: Any, *, maximum: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if (
+        not candidate
+        or len(candidate) > maximum
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in candidate)
+    ):
+        return None
+    return candidate
+
+
+def _clean_image_dimension(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    integer = int(value)
+    return integer if integer == value and 1 <= integer <= 100_000 else None
+
+
+def _nested_mapping(value: Any, key: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    nested = value.get(key)
+    return nested if isinstance(nested, Mapping) else {}
+
+
+def _image_asset_from_part(part: Mapping[str, Any]) -> AuthenticatedImageAsset | None:
+    content_type = part.get("content_type") or part.get("type")
+    if content_type not in _IMAGE_ASSET_CONTENT_TYPES:
+        return None
+    pointer = _clean_image_string(
+        part.get("asset_pointer") or part.get("assetPointer"), maximum=2_048
+    )
+    if pointer is None or not pointer.startswith(_IMAGE_ASSET_POINTER_PREFIXES):
+        return None
+
+    metadata = part.get("metadata")
+    generation = _nested_mapping(metadata, "generation")
+    dalle = _nested_mapping(metadata, "dalle")
+    image_gen = _nested_mapping(metadata, "image_gen")
+    # The part dimensions describe the concrete returned asset. Generation
+    # metadata can instead describe the requested/progress canvas, so use it
+    # only when the actual part omitted dimensions.
+    width = _clean_image_dimension(part.get("width"))
+    height = _clean_image_dimension(part.get("height"))
+    if width is None:
+        width = _clean_image_dimension(generation.get("width"))
+    if height is None:
+        height = _clean_image_dimension(generation.get("height"))
+    mime_type = _clean_image_string(
+        part.get("mime_type") or part.get("mimeType"), maximum=128
+    )
+    if mime_type is not None and not mime_type.lower().startswith("image/"):
+        mime_type = None
+    prompt = _clean_image_string(
+        dalle.get("prompt")
+        or image_gen.get("prompt")
+        or generation.get("prompt")
+        or part.get("prompt"),
+        maximum=16_384,
+    )
+    generation_id = _clean_image_string(
+        generation.get("gen_id")
+        or generation.get("generation_id")
+        or dalle.get("gen_id")
+        or image_gen.get("gen_id"),
+        maximum=512,
+    )
+    return AuthenticatedImageAsset(
+        asset_pointer=pointer,
+        width=width,
+        height=height,
+        mime_type=mime_type,
+        prompt=prompt,
+        generation_id=generation_id,
+    )
+
+
+def extract_authenticated_image_assets(value: Any) -> tuple[AuthenticatedImageAsset, ...]:
+    """Return bounded, de-duplicated generated-image pointers from a message."""
+
+    found: list[AuthenticatedImageAsset] = []
+    seen: set[str] = set()
+    stack = [value]
+    visited = 0
+    while stack and visited < 4_096 and len(found) < 32:
+        current = stack.pop()
+        visited += 1
+        if isinstance(current, Mapping):
+            asset = _image_asset_from_part(current)
+            if asset is not None and asset.asset_pointer not in seen:
+                seen.add(asset.asset_pointer)
+                found.append(asset)
+            stack.extend(reversed(list(current.values())))
+        elif isinstance(current, list):
+            stack.extend(reversed(current))
+    return tuple(found)
+
+
+def _image_generation_message(message: Any) -> bool:
+    if not isinstance(message, Mapping):
+        return False
+    author = message.get("author")
+    role = author.get("role") if isinstance(author, Mapping) else message.get("role")
+    # Uploaded reference images use the same pointer shape but are input, not
+    # proof that an image-generation job is running.
+    if role == "user":
+        return False
+    if extract_authenticated_image_assets(message.get("content")):
+        return True
+    metadata = message.get("metadata")
+    if isinstance(metadata, Mapping) and any(
+        metadata.get(key)
+        for key in (
+            "image_gen_async",
+            "image_gen_multi_stream",
+            "image_gen_task_id",
+            "image_gen_async_task_id",
+        )
+    ):
+        return True
+    author_name = author.get("name") if isinstance(author, Mapping) else None
+    recipient = message.get("recipient")
+    for value in (author_name, recipient):
+        if not isinstance(value, str):
+            continue
+        normalized = value.lower()
+        if (
+            normalized.startswith("t2uay3k")
+            or "image_gen" in normalized
+            or normalized in {"dalle.text2im", "dall-e", "dalle"}
+        ):
+            return True
+    return False
+
+
+def authenticated_image_generation_failed(message: Any) -> bool:
+    """Recognize a terminal image-tool failure without exposing its text."""
+
+    if not _image_generation_message(message) or not isinstance(message, Mapping):
+        return False
+    metadata = message.get("metadata")
+    if isinstance(metadata, Mapping) and bool(metadata.get("is_error")):
+        return True
+    content = message.get("content")
+    stack = [content]
+    visited = 0
+    while stack and visited < 512:
+        current = stack.pop()
+        visited += 1
+        if isinstance(current, Mapping):
+            content_type = current.get("content_type") or current.get("type")
+            if content_type in {"error", "system_error"}:
+                return True
+            stack.extend(current.values())
+        elif isinstance(current, list):
+            stack.extend(current)
+    return False
+
+
 def _assistant_message(message: Any) -> bool:
     if not isinstance(message, Mapping):
         return False
@@ -788,10 +977,16 @@ class _StreamAccumulator:
         self.done = False
         self.resume_token: str | None = None
         self.websocket_topic_id: str | None = None
+        self.image_generation_pending = False
+        self.image_generation_failed = False
 
     def _upsert_message(self, message: Any) -> None:
         if not isinstance(message, Mapping):
             return
+        if _image_generation_message(message):
+            self.image_generation_pending = True
+        if authenticated_image_generation_failed(message):
+            self.image_generation_failed = True
         identifier = message.get("id") or message.get("message_id")
         if not isinstance(identifier, str) or not identifier:
             return
@@ -815,6 +1010,12 @@ class _StreamAccumulator:
                 document = _apply_json_patch(document, patch)
         if isinstance(document, dict):
             self.messages[identifier] = document
+            # picture_v2 may patch async flags, an image pointer, or an error
+            # marker into an already-emitted tool message.
+            if _image_generation_message(document):
+                self.image_generation_pending = True
+            if authenticated_image_generation_failed(document):
+                self.image_generation_failed = True
 
     def accept(self, payload: Mapping[str, Any], event_name: str | None) -> None:
         conversation_id = _conversation_id_from(payload)
@@ -859,7 +1060,13 @@ class _StreamAccumulator:
             if isinstance(nested, list):
                 for message in nested:
                     self._upsert_message(message)
-        if _assistant_message(payload):
+        payload_author = payload.get("author")
+        payload_role = (
+            payload_author.get("role")
+            if isinstance(payload_author, Mapping)
+            else payload.get("role")
+        )
+        if payload_role in {"user", "assistant", "tool"}:
             self._upsert_message(payload)
 
         # Compatibility with OpenAI-style text deltas if an account is served
@@ -883,17 +1090,67 @@ class _StreamAccumulator:
         selected: dict[str, Any] | None = None
         for identifier in reversed(self.message_order):
             candidate = self.messages[identifier]
-            if _visible_assistant_message(candidate) and _content_text(
-                candidate.get("content")
+            if _visible_assistant_message(candidate) and (
+                _content_text(candidate.get("content"))
+                or extract_authenticated_image_assets(candidate.get("content"))
             ):
                 selected = candidate
                 break
-        if selected is not None:
-            answer = _content_text(selected.get("content"))
-            assistant_id = str(selected.get("id") or selected.get("message_id"))
-        else:
-            answer = self.delta_text
-            assistant_id = ""
+        # Asynchronous image turns can finish their initial SSE after the
+        # assistant has dispatched the image tool, before a visible final text
+        # message exists. Retain that message id so the conversation can be
+        # polled and continued instead of misclassifying a valid image job as a
+        # truncated text response.
+        if selected is None and self.image_generation_pending:
+            for identifier in reversed(self.message_order):
+                candidate = self.messages[identifier]
+                if (
+                    _assistant_message(candidate)
+                    and _image_generation_message(candidate)
+                ) or authenticated_image_generation_failed(candidate):
+                    selected = candidate
+                    break
+
+        last_user_index = -1
+        for index, identifier in enumerate(self.message_order):
+            candidate = self.messages[identifier]
+            author = candidate.get("author")
+            role = author.get("role") if isinstance(author, Mapping) else candidate.get("role")
+            if role == "user":
+                last_user_index = index
+        images: list[AuthenticatedImageAsset] = []
+        seen_pointers: set[str] = set()
+        for identifier in self.message_order[last_user_index + 1 :]:
+            candidate = self.messages[identifier]
+            for asset in extract_authenticated_image_assets(candidate.get("content")):
+                if asset.asset_pointer in seen_pointers:
+                    continue
+                seen_pointers.add(asset.asset_pointer)
+                images.append(asset)
+
+        answer = _content_text(selected.get("content")) if selected is not None else self.delta_text
+        if self.image_generation_failed and not images:
+            # Tool error parts can contain provider diagnostics. The image API
+            # maps the condition to a fixed local message instead of exposing
+            # those details to callers or logs.
+            answer = ""
+        parent_message = selected
+        if images:
+            # Current picture_v2 streams terminate on the image-gen tool
+            # message itself. Continuing from the earlier assistant dispatch
+            # would fork before the generated asset and lose it from the
+            # branch, so prefer the newest message that actually owns a
+            # generated pointer.
+            for identifier in reversed(self.message_order[last_user_index + 1 :]):
+                candidate = self.messages[identifier]
+                if extract_authenticated_image_assets(candidate.get("content")):
+                    parent_message = candidate
+                    break
+        assistant_id = (
+            str(parent_message.get("id") or parent_message.get("message_id"))
+            if parent_message is not None
+            else ""
+        )
 
         if not self.conversation_id:
             raise AuthenticatedProtocolError(
@@ -902,7 +1159,12 @@ class _StreamAccumulator:
                 stage="conversation_stream",
                 retryable=True,
             )
-        if not answer or not assistant_id:
+        if (
+            not answer
+            and not images
+            and not self.image_generation_pending
+            and not self.image_generation_failed
+        ) or not assistant_id:
             raise AuthenticatedProtocolError(
                 "authenticated_stream_missing_assistant_message",
                 "The authenticated response did not contain a complete assistant message.",
@@ -916,6 +1178,12 @@ class _StreamAccumulator:
             "resumeToken": self.resume_token,
             "websocketTopicId": self.websocket_topic_id,
             "streamComplete": self.done,
+            "imageGenerationPending": (
+                self.image_generation_pending
+                and not self.image_generation_failed
+                and not images
+            ),
+            "imageGenerationFailed": self.image_generation_failed and not images,
         }
         return ParsedAuthenticatedStream(
             answer=answer,
@@ -923,6 +1191,13 @@ class _StreamAccumulator:
             assistant_message_id=assistant_id,
             parent_message_id=assistant_id,
             state=state,
+            images=tuple(images),
+            image_generation_pending=(
+                self.image_generation_pending
+                and not self.image_generation_failed
+                and not images
+            ),
+            image_generation_failed=self.image_generation_failed and not images,
         )
 
 
@@ -1101,6 +1376,34 @@ def _optional_body_selector(value: str | None, label: str) -> str | None:
     return normalized
 
 
+_ALLOWED_SYSTEM_HINTS = frozenset({"picture_v2"})
+
+
+def _normalized_system_hints(values: Sequence[str] | None) -> list[str]:
+    if values is None:
+        return []
+    normalized: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise AuthenticatedProtocolError(
+                "authenticated_system_hint_invalid",
+                "The requested authenticated system hint is invalid.",
+                stage="validation",
+                retryable=False,
+            )
+        hint = value.strip()
+        if hint not in _ALLOWED_SYSTEM_HINTS:
+            raise AuthenticatedProtocolError(
+                "authenticated_system_hint_invalid",
+                "The requested authenticated system hint is invalid.",
+                stage="validation",
+                retryable=False,
+            )
+        if hint not in normalized:
+            normalized.append(hint)
+    return normalized
+
+
 def build_conversation_body(
     session: AuthenticatedProtocolSession,
     *,
@@ -1109,6 +1412,7 @@ def build_conversation_body(
     prepare_state: str,
     reasoning_effort: str | None = None,
     service_tier: str | None = None,
+    system_hints: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Build the observed CHt request subset shared by prepare and submit."""
 
@@ -1120,7 +1424,7 @@ def build_conversation_body(
         "timezone_offset_min": -480,
         "timezone": "Asia/Shanghai",
         "conversation_mode": {"kind": "primary_assistant"},
-        "system_hints": [],
+        "system_hints": _normalized_system_hints(system_hints),
         "model_response_contracts": [
             {
                 "id": "photo_upload_action.v1",
@@ -1473,6 +1777,7 @@ class AuthenticatedProtocolBridge:
         trace_id: str,
         reasoning_effort: str | None,
         service_tier: str | None,
+        system_hints: Sequence[str] | None,
     ) -> str:
         body = self._patch_configured_body(
             build_conversation_body(
@@ -1482,6 +1787,7 @@ class AuthenticatedProtocolBridge:
                 prepare_state="none",
                 reasoning_effort=reasoning_effort,
                 service_tier=service_tier,
+                system_hints=system_hints,
             )
         )
         headers = {
@@ -1547,20 +1853,43 @@ class AuthenticatedProtocolBridge:
     def _iter_limited_lines(self, response: Any) -> Iterator[bytes | str]:
         iterator = getattr(response, "iter_lines", None)
         if callable(iterator):
-            total = 0
-            for line in iterator():
-                size = len(line.encode("utf-8")) if isinstance(line, str) else len(line)
-                total += size + 1
-                if total > self.config.max_stream_bytes:
-                    raise AuthenticatedProtocolError(
-                        "authenticated_stream_too_large",
-                        "The authenticated conversation stream exceeded the local limit.",
-                        stage="conversation_stream",
-                        retryable=False,
-                    )
-                yield line
+            try:
+                total = 0
+                for line in iterator():
+                    size = len(line.encode("utf-8")) if isinstance(line, str) else len(line)
+                    total += size + 1
+                    if total > self.config.max_stream_bytes:
+                        raise AuthenticatedProtocolError(
+                            "authenticated_stream_too_large",
+                            "The authenticated conversation stream exceeded the local limit.",
+                            stage="conversation_stream",
+                            retryable=False,
+                        )
+                    yield line
+            except AuthenticatedProtocolError:
+                raise
+            except Exception as error:
+                # curl exceptions can embed the credential-bearing request URL
+                # or headers. Normalize before this reaches an ASGI traceback.
+                raise AuthenticatedProtocolError(
+                    "authenticated_stream_read_error",
+                    "The authenticated conversation stream was interrupted.",
+                    stage="conversation_stream",
+                    # The initial conversation POST may already have committed
+                    # the turn; replaying it could duplicate a message or image
+                    # charge. Resume callers still fall back explicitly.
+                    retryable=False,
+                ) from error
             return
-        content = bytes(getattr(response, "content", b""))
+        try:
+            content = bytes(getattr(response, "content", b""))
+        except Exception as error:
+            raise AuthenticatedProtocolError(
+                "authenticated_stream_read_error",
+                "The authenticated conversation stream was interrupted.",
+                stage="conversation_stream",
+                retryable=False,
+            ) from error
         if len(content) > self.config.max_stream_bytes:
             raise AuthenticatedProtocolError(
                 "authenticated_stream_too_large",
@@ -1581,6 +1910,7 @@ class AuthenticatedProtocolBridge:
         grant: AuthenticatedRequirementsGrant,
         reasoning_effort: str | None,
         service_tier: str | None,
+        system_hints: Sequence[str] | None,
     ) -> tuple[ParsedAuthenticatedStream, str | None]:
         body = self._patch_configured_body(
             build_conversation_body(
@@ -1590,6 +1920,7 @@ class AuthenticatedProtocolBridge:
                 prepare_state="success",
                 reasoning_effort=reasoning_effort,
                 service_tier=service_tier,
+                system_hints=system_hints,
             )
         )
         response = self._request(
@@ -1621,6 +1952,119 @@ class AuthenticatedProtocolBridge:
                     close()
                 except Exception:
                     pass
+
+    def resume_turn(
+        self,
+        session: AuthenticatedProtocolSession,
+        *,
+        conversation_id: str,
+        resume_token: str,
+        offset: int = 0,
+    ) -> AuthenticatedChatResult:
+        """Resume an asynchronous authenticated turn from its conduit token.
+
+        Image generation commonly hands the browser off before the tool has
+        emitted its final asset.  The official client resumes that same stream
+        with ``POST /backend-api/f/conversation/resume``.  This method performs
+        only that read-like continuation; it never resubmits the user message.
+        """
+
+        normalized_conversation_id = conversation_id.strip()
+        normalized_token = resume_token.strip()
+        if (
+            session.closed
+            or not normalized_conversation_id
+            or normalized_conversation_id != session.conversation_id
+            or len(normalized_conversation_id) > 512
+            or _has_header_control(normalized_conversation_id)
+            or not normalized_token
+            or len(normalized_token) > 65_536
+            or _has_header_control(normalized_token)
+            or isinstance(offset, bool)
+            or not isinstance(offset, int)
+            # A non-zero resume starts with suffix deltas/patches and requires
+            # the original decoder document plus acknowledged-event count.
+            # This bridge intentionally supports only the official fresh
+            # replay path until that state is retained end to end.
+            or offset != 0
+        ):
+            raise AuthenticatedProtocolError(
+                "authenticated_resume_invalid",
+                "The authenticated resume state is invalid.",
+                stage="conversation_resume",
+                retryable=False,
+            )
+
+        with session.lock:
+            response = self._request(
+                session,
+                "POST",
+                "/backend-api/f/conversation/resume",
+                stage="conversation_resume",
+                timeout=self.config.conversation_timeout_seconds,
+                headers={
+                    **self._auth_headers(
+                        session, referer=self._conversation_referer(session)
+                    ),
+                    "Accept": "text/event-stream",
+                    "Content-Type": "application/json",
+                    "Cache-Control": "no-cache",
+                    "OAI-Echo-Logs": "",
+                    "OAI-Telemetry": "[1,null]",
+                    "x-conduit-token": normalized_token,
+                },
+                json={
+                    "conversation_id": normalized_conversation_id,
+                    "offset": offset,
+                },
+                stream=True,
+            )
+            try:
+                _require_success(response, "conversation_resume")
+                parsed = parse_authenticated_sse(
+                    self._iter_limited_lines(response),
+                    existing_conversation_id=normalized_conversation_id,
+                )
+                upstream_request_id = _request_id(response)
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+
+            if parsed.conversation_id != normalized_conversation_id:
+                raise AuthenticatedProtocolError(
+                    "authenticated_resume_conversation_mismatch",
+                    "The authenticated resume stream returned a different conversation.",
+                    stage="conversation_resume",
+                    retryable=False,
+                )
+            session.parent_message_id = parsed.parent_message_id
+            session.last_used_monotonic = time.monotonic()
+            session.conversation_state = {
+                **session.conversation_state,
+                **parsed.state,
+                "conversationId": normalized_conversation_id,
+                "lastAssistantMessageId": parsed.assistant_message_id,
+                "parentMessageId": parsed.parent_message_id,
+                "model": session.model,
+                "turnIndex": session.turn_index,
+            }
+            return AuthenticatedChatResult(
+                answer=parsed.answer,
+                conversation_id=parsed.conversation_id,
+                conversation_state=copy.deepcopy(session.conversation_state),
+                parent_message_id=parsed.parent_message_id,
+                assistant_message_id=parsed.assistant_message_id,
+                upstream_request_id=upstream_request_id,
+                attempts=1,
+                model=session.model,
+                images=parsed.images,
+                image_generation_pending=parsed.image_generation_pending,
+                image_generation_failed=parsed.image_generation_failed,
+            )
 
     def _coerce_refresh_result(
         self, session: AuthenticatedProtocolSession, result: Any
@@ -1693,6 +2137,7 @@ class AuthenticatedProtocolBridge:
         reasoning_effort: str | None = None,
         service_tier: str | None = None,
         user_message: Mapping[str, Any] | None = None,
+        system_hints: Sequence[str] | None = None,
     ) -> AuthenticatedChatResult:
         if session.closed:
             raise AuthenticatedProtocolError(
@@ -1727,6 +2172,7 @@ class AuthenticatedProtocolBridge:
             reasoning_effort, "reasoning_effort"
         )
         normalized_tier = _optional_body_selector(service_tier, "service_tier")
+        normalized_hints = _normalized_system_hints(system_hints)
 
         with session.lock:
             trace_id = str(uuid.uuid4())
@@ -1741,6 +2187,7 @@ class AuthenticatedProtocolBridge:
                         trace_id=trace_id,
                         reasoning_effort=normalized_effort,
                         service_tier=normalized_tier,
+                        system_hints=normalized_hints,
                     )
                     parsed, upstream_request_id = self._submit_conversation(
                         session,
@@ -1751,6 +2198,7 @@ class AuthenticatedProtocolBridge:
                         grant=grant,
                         reasoning_effort=normalized_effort,
                         service_tier=normalized_tier,
+                        system_hints=normalized_hints,
                     )
                     session.conversation_id = parsed.conversation_id
                     session.parent_message_id = parsed.parent_message_id
@@ -1774,6 +2222,9 @@ class AuthenticatedProtocolBridge:
                         upstream_request_id=upstream_request_id,
                         attempts=attempt,
                         model=selected_model,
+                        images=parsed.images,
+                        image_generation_pending=parsed.image_generation_pending,
+                        image_generation_failed=parsed.image_generation_failed,
                     )
                 except ProtocolError as error:
                     if isinstance(error, AuthenticatedProtocolError):
@@ -1825,6 +2276,7 @@ class AuthenticatedProtocolBridge:
 __all__ = [
     "AuthenticatedChatResult",
     "AuthenticatedCredential",
+    "AuthenticatedImageAsset",
     "AuthenticatedProtocolBridge",
     "AuthenticatedProtocolConfig",
     "AuthenticatedProtocolError",
@@ -1833,6 +2285,8 @@ __all__ = [
     "ParsedAuthenticatedStream",
     "SSEEvent",
     "build_conversation_body",
+    "authenticated_image_generation_failed",
+    "extract_authenticated_image_assets",
     "iter_sse_events",
     "parse_authenticated_sse",
 ]

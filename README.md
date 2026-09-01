@@ -149,6 +149,8 @@ server/authenticated_protocol.py
                              认证 Sentinel、会话提交、SSE v1 解码与续聊
 server/authenticated_files.py
                              认证文件上传、处理流与消息引用映射
+server/authenticated_images.py
+                             图片任务轮询、私有资源解析与账号隔离代理
 server/protocol.py           匿名协议、PoW、DPU 解析与重试
 server/protocol_turnstile_vm.mjs
                              Turnstile DX 本地执行器
@@ -319,6 +321,24 @@ GET /api/conversations/<opaque-history-id>
 paginated conversation/messages 协议，并为仍使用 full-conversation 协议的账号
 保留兼容路径。上游 401 只刷新一次；403 不会销毁仍然有效的本地登录。切换账号、
 退出、Session 过期或淘汰时，会同时清理历史绑定和凭据会话。
+
+### 图片生成接口
+
+独立 `/images` 页面使用当前登录账号创建真实图片任务：
+
+```http
+POST /api/images/generations
+GET  /api/images/generations/<imgjob-id>
+GET  /api/images/assets/<imgasset-id>
+```
+
+创建请求沿用聊天消息结构，后端以 `picture_v2` 提交认证 conversation；参考图通过
+`entry_surface=image_gen_upload_input` 上传，并同时写入清洗后的 attachment metadata 与
+`image_asset_pointer`。异步任务优先续接 `/backend-api/f/conversation/resume`，不可续接时才按
+较低频率读取该新对话。浏览器只会收到 `imgjob-*`、`imgasset-*` 和同源资源 URL；上游
+conversation id、asset pointer、签名下载地址、Cookie、access token 以及 resume token 均留在
+服务端内存中。状态响应必须携带 `X-ChatGPT-Identity-Mode: verified-session`，资源也按当前
+HttpOnly Session 隔离，并使用 `private, no-store` 返回。
 
 ### Codex 实时额度接口
 
